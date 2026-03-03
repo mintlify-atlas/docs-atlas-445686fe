@@ -1,0 +1,181 @@
+{
+  "projectType": "saas",
+  "projectName": "VIGIA",
+  "projectDescription": "Comprehensive pharmacovigilance platform for adverse event reporting, ICSR management, and regulatory compliance",
+  "theme": "linden",
+  "primaryColor": "#0066CC",
+  "lightColor": "#4D94FF",
+  "darkColor": "#004C99",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/icsr-management",
+              "features/adverse-event-reporting",
+              "features/ips-reports",
+              "features/surveillance",
+              "features/document-management"
+            ]
+          },
+          {
+            "group": "User Guides",
+            "pages": [
+              "guides/case-intake",
+              "guides/case-evaluation",
+              "guides/causality-assessment",
+              "guides/followup-management",
+              "guides/generating-reports"
+            ]
+          },
+          {
+            "group": "Modules",
+            "pages": [
+              "modules/ingestion",
+              "modules/ocr-nlp",
+              "modules/training",
+              "modules/audit-trail",
+              "modules/bibliographic-search"
+            ]
+          },
+          {
+            "group": "Regulatory",
+            "pages": [
+              "regulatory/digemid",
+              "regulatory/fda",
+              "regulatory/ema",
+              "regulatory/vigiaccess"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "admin/user-management",
+              "admin/multi-tenant",
+              "admin/configuration",
+              "admin/backup-restore"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/authentication/overview",
+              "api/authentication/login",
+              "api/authentication/permissions"
+            ]
+          },
+          {
+            "group": "ICSR",
+            "pages": [
+              "api/icsr/overview",
+              "api/icsr/create-case",
+              "api/icsr/list-cases",
+              "api/icsr/update-case",
+              "api/icsr/events",
+              "api/icsr/followup"
+            ]
+          },
+          {
+            "group": "IPS Reports",
+            "pages": [
+              "api/ips/overview",
+              "api/ips/create-report",
+              "api/ips/calendar",
+              "api/ips/data-sources"
+            ]
+          },
+          {
+            "group": "Document Management",
+            "pages": [
+              "api/documents/overview",
+              "api/documents/upload",
+              "api/documents/signatures",
+              "api/documents/export"
+            ]
+          },
+          {
+            "group": "Surveillance",
+            "pages": [
+              "api/surveillance/overview",
+              "api/surveillance/schedule",
+              "api/surveillance/global-sources"
+            ]
+          },
+          {
+            "group": "OCR & NLP",
+            "pages": [
+              "api/ocr/process-document",
+              "api/nlp/extract-data",
+              "api/nlp/translate"
+            ]
+          },
+          {
+            "group": "Products & MedDRA",
+            "pages": [
+              "api/products/overview",
+              "api/meddra/search",
+              "api/icd11/search"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Individual Case Safety Report (ICSR) management and tracking",
+    "Multi-channel case intake (web form, email, WhatsApp)",
+    "OCR and AI-powered data extraction from documents",
+    "Causality assessment (Karch-Lasagna, FT algorithms)",
+    "Periodic Safety Update Reports (IPS/PSUR) generation",
+    "Global pharmacovigilance surveillance (FDA, EMA, DIGEMID, VigiAccess)",
+    "Automated followup scheduling and tracking",
+    "Document management with digital signatures",
+    "Training and certification module",
+    "Multi-tenant architecture with role-based access control",
+    "Audit trail and compliance tracking",
+    "MedDRA and ICD-11 integration",
+    "Bibliographic search (PubMed, SciELO, PMC, LILACS)"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/auth/login - User authentication",
+    "POST /api/v1/icsr - Create new ICSR case",
+    "GET /api/v1/icsr - List ICSR cases",
+    "GET /api/v1/icsr/{id} - Get ICSR case details",
+    "PUT /api/v1/icsr/{id} - Update ICSR case",
+    "POST /api/v1/icsr/{id}/eventos - Add adverse events",
+    "POST /api/v1/icsr/{id}/followup - Add followup message",
+    "GET /api/v1/ips - List IPS reports",
+    "POST /api/v1/ips - Create IPS report",
+    "GET /api/v1/ips/calendario - Get IPS calendar",
+    "POST /api/v1/ingesta/ficha - Submit case via web form",
+    "POST /api/v1/ocr/process - Process document with OCR",
+    "POST /api/v1/nlp/extract - Extract data with NLP",
+    "GET /api/v1/surveillance/schedule - Get surveillance schedule",
+    "GET /api/v1/producto - List products",
+    "GET /api/v1/meddra/search - Search MedDRA terms",
+    "GET /api/v1/icd11/search - Search ICD-11 codes",
+    "POST /api/v1/documentos - Create document",
+    "POST /api/v1/firmas - Add digital signature",
+    "GET /api/v1/capacitacion/programas - List training programs",
+    "GET /api/v1/audit - Get audit trail",
+    "GET /api/v1/regulators/fda - Query FDA data",
+    "GET /api/v1/regulators/ema - Query EMA data",
+    "GET /api/v1/biblio/search - Search bibliographic databases"
+  ]
+}
