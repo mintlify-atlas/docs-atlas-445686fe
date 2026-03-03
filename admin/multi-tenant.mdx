@@ -1,0 +1,659 @@
+---
+title: 'Multi-Tenant Architecture'
+description: 'Database isolation, tenant provisioning, and client management in VIGIA'
+icon: 'building'
+---
+
+## Overview
+
+VIGIA implements a **database-per-tenant** architecture where each client gets a completely isolated PostgreSQL database. This provides the strongest level of data isolation while maintaining a centralized master database for tenant management.
+
+## Architecture Components
+
+### Master Database
+
+The master database (`MASTER_DATABASE_URL`) stores:
+
+- **Tenant registry** (`clientes_saas` table)
+- **SaaS configuration**
+- **Cross-tenant analytics** (optional)
+- **License management**
+
+### Tenant Databases
+
+Each tenant gets a dedicated database with:
+
+- **Complete VIGIA schema** (all tables)
+- **Isolated data** (users, cases, products, etc.)
+- **Independent backups**
+- **Separate connection pools**
+
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────────┐
+│         Master Database                 │
+│    (vigia_master or configured)         │
+│                                         │
+│  ┌─────────────────────────────────┐   │
+│  │   clientes_saas                 │   │
+│  │  - id, ruc, subdominio          │   │
+│  │  - db_name, correo_acceso       │   │
+│  │  - plan, limits, config         │   │
+│  └─────────────────────────────────┘   │
+└─────────────────────────────────────────┘
+                 │
+                 │ References
+                 ├──────────────┬──────────────┬─────────────
+                 │              │              │
+                 ▼              ▼              ▼
+    ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+    │ vigia_empresa1   │  │ vigia_empresa2   │  │ vigia_empresa3   │
+    │                  │  │                  │  │                  │
+    │ - users          │  │ - users          │  │ - users          │
+    │ - icsr           │  │ - icsr           │  │ - icsr           │
+    │ - products       │  │ - products       │  │ - products       │
+    │ - ...            │  │ - ...            │  │ - ...            │
+    └──────────────────┘  └──────────────────┘  └──────────────────┘
+```
+
+## Tenant Model
+
+Tenants are represented by the `ClienteSaaS` model (`backend/app/models/cliente_saas.py:23-124`):
+
+### Core Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | Integer | Primary key |
+| `ruc` | String(11) | Tax ID (unique) |
+| `razon_social` | String(255) | Legal business name |
+| `subdominio` | String(63) | Tenant subdomain (unique) |
+| `correo_acceso` | String(255) | Admin email for initial user |
+| `contacto_nombre` | String(255) | Contact person name |
+| `plan` | String(50) | Subscription plan |
+| `entorno` | String(20) | Environment: demo/produccion |
+| `is_active` | Boolean | Tenant activation status |
+| `config` | JSONB | Custom configuration |
+
+### Plan and Limits
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `limitar_emision` | Boolean | Enable emission limits |
+| `max_comprobantes` | Integer | Max invoices/documents |
+| `max_usuarios` | Integer | Max user accounts |
+| `max_establecimientos` | Integer | Max establishment locations |
+
+### Computed Properties
+
+The `ClienteSaaS` model includes helpful computed properties:
+
+```python
+@property
+def db_name(self) -> str:
+    """Physical database name: vigia_{subdominio}"""
+    return f"vigia_{(self.subdominio or '').strip().lower()}"
+
+@property
+def db_url(self) -> str:
+    """Full connection string using TENANT_DB_TEMPLATE"""
+    return settings.TENANT_DB_TEMPLATE.format(db_name=self.db_name)
+
+@property
+def hostname(self) -> str:
+    """Full hostname: {subdominio}.{SAAS_BASE_DOMAIN}"""
+    base = settings.SAAS_BASE_DOMAIN or ""
+    if base:
+        return f"{self.subdominio}.{base}"
+    return self.subdominio
+```
+
+### Example Record
+
+```python
+cliente = ClienteSaaS(
+    ruc="20123456789",
+    razon_social="Farmacia Mi Salud S.A.C.",
+    subdominio="misalud",
+    correo_acceso="admin@misalud.com",
+    contacto_nombre="Juan Pérez",
+    plan="ilimitado",
+    limitar_emision=False,
+    entorno="produccion",
+    is_active=True
+)
+
+# Computed values:
+# cliente.db_name → "vigia_misalud"
+# cliente.db_url → "postgresql+psycopg2://user:pass@localhost/vigia_misalud"
+# cliente.hostname → "misalud.midominio.com"
+```
+
+## Configuration
+
+### Environment Variables
+
+Configure multi-tenancy in `.env` (`backend/app/core/config.py:62-68`):
+
+```bash
+# Master database (stores tenant registry)
+MASTER_DATABASE_URL=postgresql+psycopg2://postgres:password@localhost:5432/vigia_master
+
+# Template for tenant databases (must include {db_name} placeholder)
+TENANT_DB_TEMPLATE=postgresql+psycopg2://postgres:password@localhost:5432/{db_name}
+
+# Legacy/default database (for backward compatibility)
+DATABASE_URL=postgresql+psycopg2://postgres:password@localhost:5432/vigiadb
+
+# Base domain for tenant URLs
+SAAS_BASE_DOMAIN=midominio.com
+# Local development:
+# SAAS_BASE_DOMAIN=localhost:5173
+```
+
+### Template Validation
+
+The `TENANT_DB_TEMPLATE` is validated at startup (`backend/app/core/config.py:278-294`):
+
+```python
+@field_validator("TENANT_DB_TEMPLATE", mode="after")
+@classmethod
+def _validate_tenant_template(cls, v, info):
+    if not v:
+        return v
+    if "{db_name}" not in v:
+        raise ValueError(
+            "TENANT_DB_TEMPLATE debe contener el placeholder {db_name}, "
+            "ej: postgresql+psycopg2://user:pass@localhost/{db_name}"
+        )
+    return v
+```
+
+## Tenant Provisioning
+
+Provisioning creates a new tenant database and admin user in three steps.
+
+### Step 1: Create Physical Database
+
+Function: `_create_database_if_not_exists()` at `backend/app/services/tenants.py:58-77`
+
+```python
+def _create_database_if_not_exists(db_name: str) -> None:
+    logger.info("[tenants] creating db=%s", db_name)
+    create_sql = text(f'CREATE DATABASE "{db_name}"')
+    
+    try:
+        with admin_engine.connect() as conn:
+            conn.execute(create_sql)
+        logger.info("[tenants] created db=%s", db_name)
+    except ProgrammingError as e:
+        if "already exists" in str(e).lower():
+            logger.info("[tenants] db already exists db=%s", db_name)
+        else:
+            raise
+```
+
+The admin engine uses `AUTOCOMMIT` isolation level for DDL operations.
+
+### Step 2: Initialize Schema
+
+Function: `_init_tenant_schema()` at `backend/app/services/tenants.py:82-93`
+
+```python
+def _init_tenant_schema(cliente: ClienteSaaS) -> None:
+    logger.info("[tenants] init schema sub=%s db=%s", 
+                cliente.subdominio, cliente.db_name)
+    
+    engine_tenant = create_engine(cliente.db_url, pool_pre_ping=True)
+    
+    try:
+        # Create all tables from Base.metadata
+        Base.metadata.create_all(bind=engine_tenant)
+        logger.info("[tenants] schema ok db=%s", cliente.db_name)
+    finally:
+        engine_tenant.dispose()
+```
+
+This creates all tables defined in `Base.metadata`, including:
+- `users`, `roles`, `user_roles`
+- `icsr`, `icsr_products`, `icsr_events`
+- `products`, `clients`, `surveillance_alerts`
+- All other VIGIA tables
+
+### Step 3: Create Admin User
+
+Function: `_create_tenant_admin_user()` at `backend/app/services/tenants.py:98-153`
+
+```python
+def _create_tenant_admin_user(cliente: ClienteSaaS, password_plano: str) -> None:
+    engine_tenant = create_engine(cliente.db_url, pool_pre_ping=True)
+    SessionTenant = sessionmaker(bind=engine_tenant)
+    db_tenant = SessionTenant()
+    
+    try:
+        # Create or get admin role
+        admin_role = db_tenant.query(Role).filter(
+            Role.name == RoleEnum.admin.value
+        ).one_or_none()
+        
+        if not admin_role:
+            admin_role = Role(name=RoleEnum.admin.value)
+            db_tenant.add(admin_role)
+            db_tenant.flush()
+        
+        # Create admin user
+        user = User(
+            username=cliente.correo_acceso,
+            email=cliente.correo_acceso,
+            hashed_password=get_password_hash(password_plano),
+            is_active=True,
+            roles=[admin_role.name]
+        )
+        
+        db_tenant.add(user)
+        db_tenant.commit()
+    finally:
+        db_tenant.close()
+        engine_tenant.dispose()
+```
+
+### Complete Provisioning Flow
+
+Orchestration function: `provisionar_tenant()` at `backend/app/services/tenants.py:196-206`
+
+```python
+def provisionar_tenant(cliente: ClienteSaaS, 
+                       password_inicial: Optional[str] = None) -> str:
+    if not settings.TENANT_DB_TEMPLATE:
+        raise RuntimeError("TENANT_DB_TEMPLATE no está configurado en .env")
+    
+    # Generate password if not provided
+    password_plano = (
+        password_inicial.strip() if password_inicial 
+        else secrets.token_urlsafe(10)
+    )
+    
+    # Execute provisioning steps
+    _create_database_if_not_exists(cliente.db_name)
+    _init_tenant_schema(cliente)
+    _create_tenant_admin_user(cliente, password_plano)
+    
+    return password_plano
+```
+
+## Tenant Management API
+
+The admin API provides complete tenant lifecycle management at `backend/app/routers/admin_clientes.py`.
+
+### List Tenants
+
+```http
+GET /admin/clientes/?skip=0&limit=100&include_inactive=true
+```
+
+Response:
+```json
+{
+  "total": 3,
+  "items": [
+    {
+      "id": 1,
+      "ruc": "20123456789",
+      "nombre": "Farmacia Mi Salud S.A.C.",
+      "subdominio": "misalud",
+      "hostname": "misalud.midominio.com",
+      "correo_acceso": "admin@misalud.com",
+      "entorno": "produccion",
+      "activo": true,
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+### Create Tenant
+
+```http
+POST /admin/clientes/
+Content-Type: application/json
+
+{
+  "ruc": "20987654321",
+  "nombre": "Laboratorio Pharma Plus",
+  "subdominio": "pharmaplus",
+  "correo_acceso": "admin@pharmaplus.com",
+  "contacto_nombre": "María García",
+  "plan": "ilimitado",
+  "limitar_emision": false,
+  "max_usuarios": null,
+  "entorno": "demo",
+  "activo": true,
+  "password_inicial": "TempPass123!"
+}
+```
+
+Implementation at `backend/app/routers/admin_clientes.py:43-79`:
+
+```python
+@router.post("/clientes/", response_model=ClienteOut, status_code=201)
+def create_cliente(payload: ClienteCreate, db: Session = Depends(get_master_db)):
+    sub = payload.subdominio.strip().lower()
+    
+    # Validate uniqueness
+    if db.scalar(select(ClienteSaaS).where(ClienteSaaS.ruc == payload.ruc)):
+        raise HTTPException(400, "Ya existe un cliente con ese RUC")
+    if db.scalar(select(ClienteSaaS).where(ClienteSaaS.subdominio == sub)):
+        raise HTTPException(400, "Ya existe un cliente con ese subdominio")
+    
+    # Create tenant record
+    cliente = ClienteSaaS(
+        ruc=payload.ruc,
+        razon_social=payload.nombre,
+        subdominio=sub,
+        correo_acceso=payload.correo_acceso,
+        # ... other fields
+    )
+    
+    db.add(cliente)
+    db.commit()
+    db.refresh(cliente)
+    
+    # Provision database and admin user
+    try:
+        provisionar_tenant(cliente, password_inicial=payload.password_inicial)
+    except Exception as e:
+        raise HTTPException(500, detail=f"Error al provisionar tenant: {e}")
+    
+    return cliente
+```
+
+### Update Tenant
+
+```http
+PUT /admin/clientes/{cliente_id}
+Content-Type: application/json
+
+{
+  "plan": "premium",
+  "max_usuarios": 50,
+  "entorno": "produccion"
+}
+```
+
+### Toggle Activation
+
+```http
+POST /admin/clientes/{cliente_id}/toggle
+```
+
+Toggles `is_active` status. Inactive tenants cannot authenticate.
+
+### Delete Tenant
+
+**Soft delete** (default):
+```http
+DELETE /admin/clientes/{cliente_id}
+```
+
+Sets `is_active = false` without removing data.
+
+**Hard delete** (permanent):
+```http
+DELETE /admin/clientes/{cliente_id}?hard=true
+```
+
+Implementation at `backend/app/routers/admin_clientes.py:114-143`:
+
+```python
+@router.delete("/clientes/{cliente_id}", status_code=204)
+def delete_cliente(
+    cliente_id: int,
+    hard: bool = Query(False),
+    db: Session = Depends(get_master_db),
+):
+    cliente = db.get(ClienteSaaS, cliente_id)
+    if not cliente:
+        raise HTTPException(404, "Cliente no encontrado")
+    
+    if not hard:
+        # Soft delete
+        logger.info("[admin_clientes] soft delete id=%s sub=%s", 
+                   cliente.id, cliente.subdominio)
+        cliente.is_active = False
+        db.commit()
+        return Response(status_code=204)
+    
+    # Hard delete: drop database
+    logger.warning("[admin_clientes] HARD DELETE id=%s sub=%s db=%s",
+                  cliente.id, cliente.subdominio, cliente.db_name)
+    
+    try:
+        eliminar_tenant(cliente, drop_db=True)
+    except Exception as e:
+        raise HTTPException(500, detail=f"No se pudo eliminar la BD: {e}")
+    
+    db.delete(cliente)
+    db.commit()
+    return Response(status_code=204)
+```
+
+## Database Deletion
+
+Hard deletion requires terminating active connections before dropping the database.
+
+### Drop Database Function
+
+`drop_database_if_exists()` at `backend/app/services/tenants.py:158-185`:
+
+```python
+def drop_database_if_exists(db_name: str) -> None:
+    logger.info("[tenants] drop db request db=%s", db_name)
+    
+    # Check if exists
+    exists_before = _db_exists(db_name)
+    if not exists_before:
+        logger.info("[tenants] db does not exist, skip db=%s", db_name)
+        return
+    
+    try:
+        # Terminate all connections
+        killed = _terminate_db_connections(db_name)
+        logger.info("[tenants] terminated connections=%s db=%s", killed, db_name)
+        
+        # Drop database
+        with admin_engine.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}"'))
+        
+        # Verify deletion
+        exists_after = _db_exists(db_name)
+        if exists_after:
+            raise RuntimeError(f"No se pudo eliminar la BD {db_name}")
+        
+        logger.info("[tenants] drop ok db=%s", db_name)
+    except Exception as e:
+        logger.exception("[tenants] drop failed db=%s err=%s", db_name, e)
+        raise
+```
+
+### Connection Termination
+
+`_terminate_db_connections()` at `backend/app/services/tenants.py:35-53`:
+
+```python
+def _terminate_db_connections(db_name: str) -> int:
+    sql = text("""
+        SELECT count(*)::int
+        FROM pg_stat_activity
+        WHERE datname = :db_name
+          AND pid <> pg_backend_pid();
+    """)
+    
+    kill_sql = text("""
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = :db_name
+          AND pid <> pg_backend_pid();
+    """)
+    
+    with admin_engine.connect() as conn:
+        cnt = conn.execute(sql, {"db_name": db_name}).scalar() or 0
+        if cnt:
+            conn.execute(kill_sql, {"db_name": db_name})
+        return int(cnt)
+```
+
+## Tenant Resolution
+
+VIGIA resolves the active tenant using multiple strategies.
+
+### Tenant Session Helper
+
+`get_tenant_session()` at `backend/app/core/tenants.py:87-94`:
+
+```python
+def get_tenant_session(cliente: ClienteSaaS) -> Session:
+    """Session connected to tenant database"""
+    engine = get_tenant_engine(cliente)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    return SessionLocal()
+```
+
+### Engine Caching
+
+`get_tenant_engine()` at `backend/app/core/tenants.py:75-84`:
+
+```python
+# Cache engines to avoid recreation
+_ENGINE_CACHE: Dict[str, Engine] = {}
+
+def get_tenant_engine(cliente: ClienteSaaS) -> Engine:
+    db_name = cliente.db_name
+    engine = _ENGINE_CACHE.get(db_name)
+    if engine is None:
+        engine = create_engine(cliente.db_url, pool_pre_ping=True)
+        _ENGINE_CACHE[db_name] = engine
+    return engine
+```
+
+### Request-Level Tenant Resolution
+
+Tenants are identified via the `X-Tenant` header in HTTP requests:
+
+```python
+# From backend/app/routers/auth.py:128-146
+def _tenant_from_request_or_token(request: Request, 
+                                   token: Optional[str] = None) -> Optional[str]:
+    # 1) X-Tenant header (highest priority)
+    raw = request.headers.get("x-tenant")
+    sub = (raw or "").strip().lower()
+    if sub and sub not in LEGACY_TENANT_ALIASES:
+        return sub
+    
+    # 2) JWT token claim
+    if token:
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, 
+                               algorithms=[settings.ALGORITHM])
+            t = (payload.get("tenant") or "").strip().lower()
+            if t and t not in LEGACY_TENANT_ALIASES:
+                return t
+        except Exception:
+            pass
+    
+    # 3) Legacy mode
+    return None
+```
+
+## Migration from Single-Tenant
+
+### Backward Compatibility
+
+VIGIA maintains backward compatibility with single-tenant deployments:
+
+```python
+# From backend/app/core/config.py:262-276
+@field_validator("MASTER_DATABASE_URL", mode="after")
+@classmethod
+def _default_master_db(cls, v, info):
+    """If MASTER_DATABASE_URL not set, use DATABASE_URL (legacy mode)"""
+    if v:
+        return v
+    db_url = info.data.get("DATABASE_URL")
+    if not db_url:
+        raise ValueError("Must configure MASTER_DATABASE_URL or DATABASE_URL")
+    return db_url
+```
+
+### Migration Steps
+
+1. **Set up master database**:
+   ```sql
+   CREATE DATABASE vigia_master;
+   ```
+
+2. **Update environment**:
+   ```bash
+   MASTER_DATABASE_URL=postgresql+psycopg2://user:pass@localhost/vigia_master
+   TENANT_DB_TEMPLATE=postgresql+psycopg2://user:pass@localhost/{db_name}
+   ```
+
+3. **Create `clientes_saas` table** in master:
+   ```python
+   from app.models.cliente_saas import ClienteSaaS
+   from app.core.database import master_engine
+   
+   Base.metadata.create_all(bind=master_engine, 
+                            tables=[ClienteSaaS.__table__])
+   ```
+
+4. **Migrate existing database** as first tenant:
+   ```python
+   cliente = ClienteSaaS(
+       ruc="20000000000",
+       razon_social="Legacy Tenant",
+       subdominio="legacy",
+       correo_acceso="admin@legacy.com",
+       plan="ilimitado",
+       entorno="produccion",
+       is_active=True
+   )
+   db.add(cliente)
+   db.commit()
+   ```
+
+5. **Update connection routing** to use `X-Tenant` header
+
+## Best Practices
+
+### Tenant Naming
+
+- **Subdomains**: Use lowercase, alphanumeric, hyphens only
+- **Database names**: Auto-generated as `vigia_{subdominio}`
+- **Uniqueness**: Enforce unique RUC and subdomain
+
+### Security
+
+- **Isolation**: Each tenant has separate database
+- **Authentication**: JWT tokens include tenant claim
+- **Validation**: Always validate `X-Tenant` header
+- **Hard deletes**: Require explicit confirmation
+
+### Performance
+
+- **Engine caching**: Cache database engines per tenant
+- **Connection pooling**: Use `pool_pre_ping=True`
+- **Lazy provisioning**: Create databases only when needed
+
+### Monitoring
+
+- **Logging**: All tenant operations are logged with tenant ID
+- **Trace IDs**: Track provisioning across steps
+- **Error handling**: Graceful degradation for missing databases
+
+## Related Documentation
+
+- [User Management](/admin/user-management)
+- [Configuration](/admin/configuration)
+- [Backup & Restore](/admin/backup-restore)

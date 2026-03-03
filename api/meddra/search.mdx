@@ -1,0 +1,339 @@
+---
+title: MedDRA Search API
+description: Search and suggest MedDRA terms across the full hierarchy (SOC, HLGT, HLT, PT, LLT) with AI-powered extraction and synonym expansion
+---
+
+The MedDRA API provides intelligent search capabilities across all levels of the MedDRA hierarchy, with AI-powered adverse event extraction from clinical narratives.
+
+## Base Path
+
+```
+/api/v1/meddra
+```
+
+## Authentication
+
+All endpoints require the `icsr:read` permission via the `require_permission` dependency.
+
+---
+
+## MedDRA Hierarchy Levels
+
+MedDRA organizes adverse events in a 5-level hierarchy:
+
+| Level | Code | Description | Example |
+|-------|------|-------------|----------|
+| **SOC** | System Organ Class | Highest level categorization | "Trastornos cardíacos" |
+| **HLGT** | High Level Group Term | Organ/physiology grouping | "Arritmias cardiacas" |
+| **HLT** | High Level Term | Medical condition grouping | "Taquiarritmias" |
+| **PT** | Preferred Term | Standard medical terminology | "Taquicardia" |
+| **LLT** | Lowest Level Term | Clinical/laymen terms | "Palpitaciones", "Latidos rápidos" |
+
+---
+
+## Endpoints
+
+### AI-Powered Adverse Event Extraction
+
+<Card title="POST /meddra/extract_ai" icon="brain">
+  Extract adverse events from clinical narratives using OpenAI GPT models.
+</Card>
+
+This endpoint analyzes free-text clinical narratives and identifies adverse events mentioned in the text. The AI is instructed to:
+
+- Extract **only** terms explicitly or near-literally mentioned in the text
+- Avoid inventing diagnoses or adding qualifiers not present in the narrative
+- Return short, literal terms (1-4 words)
+- Deduplicate similar events (e.g., "picar" and "picazón" → return only one)
+
+**Request Body:**
+
+```json
+{
+  "narrative": "El paciente presentó picazón generalizada y náuseas después de tomar el medicamento. También reportó mareos leves.",
+  "product": "Amoxicilina 500mg",
+  "lang": "es"
+}
+```
+
+**Parameters:**
+
+- `narrative` (required): Clinical narrative text
+- `product` (optional): Suspected product name
+- `lang` (optional, default: "es"): Language code
+
+**Response:** `200 OK`
+
+```json
+{
+  "ok": true,
+  "model_used": "gpt-4o-mini",
+  "terms": [
+    "picazón",
+    "náuseas",
+    "mareos"
+  ]
+}
+```
+
+**Configuration:**
+
+- Model: Controlled by `OPENAI_MEDDRA_MODEL` env var (default: `gpt-4o-mini`)
+- Requires: `OPENAI_API_KEY` environment variable
+
+**Literal Matching Logic:**
+
+The endpoint applies strict filtering to ensure extracted terms actually appear in the narrative:
+
+1. Normalizes text (removes accents, lowercases, collapses whitespace)
+2. Checks if term exists as substring or word boundary match
+3. Rejects AI hallucinations that don't appear in source text
+4. Compresses verbose phrases to shortest literal form ("picar todo el cuerpo" → "picar")
+
+---
+
+### Get MedDRA Options for Terms
+
+<Card title="POST /meddra/options" icon="list-check">
+  For each extracted term, generate AI synonyms and search MedDRA database to provide coding options.
+</Card>
+
+This endpoint takes the extracted adverse event terms and:
+
+1. Generates clinical synonyms using AI (e.g., "picar" → ["picar", "picazón", "prurito", "picor"])
+2. Searches MedDRA database with each synonym
+3. Ranks and deduplicates results
+4. Returns top coding options for each term
+
+**Request Body:**
+
+```json
+{
+  "terms": ["picazón", "náuseas"],
+  "narrative": "El paciente presentó picazón generalizada y náuseas...",
+  "limit": 15,
+  "scope": "all",
+  "version_id": null
+}
+```
+
+**Parameters:**
+
+- `terms` (required): Array of adverse event terms to code
+- `narrative` (optional): Original narrative for context
+- `limit` (optional, default: 15): Max options per term
+- `scope` (optional, default: "all"): MedDRA level scope (`all`, `llt`, `pt`, `hlt`, `hlgt`, `soc`)
+- `version_id` (optional): Specific MedDRA version to search
+
+**Response:** `200 OK`
+
+```json
+{
+  "ok": true,
+  "model_used": "gpt-4o-mini",
+  "items": [
+    {
+      "term": "picazón",
+      "variants_used": ["picazón", "prurito", "picor"],
+      "options": [
+        {
+          "code": 10037087,
+          "term": "Prurito",
+          "level": "PT",
+          "pt_code": 10037087,
+          "pt_term": "Prurito",
+          "primary_soc": 10040785,
+          "primary_soc_name": "Trastornos de la piel y del tejido subcutáneo",
+          "source": "db"
+        },
+        {
+          "code": 10037088,
+          "term": "Prurito generalizado",
+          "level": "LLT",
+          "pt_code": 10037087,
+          "pt_term": "Prurito",
+          "primary_soc": 10040785,
+          "primary_soc_name": "Trastornos de la piel y del tejido subcutáneo",
+          "source": "db"
+        }
+      ]
+    },
+    {
+      "term": "náuseas",
+      "variants_used": ["náuseas", "nausea"],
+      "options": [
+        {
+          "code": 10028813,
+          "term": "Náuseas",
+          "level": "PT",
+          "pt_code": 10028813,
+          "pt_term": "Náuseas",
+          "primary_soc": 10017947,
+          "primary_soc_name": "Trastornos gastrointestinales",
+          "source": "db"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Fallback Behavior:**
+
+If no MedDRA matches are found for a term:
+
+1. **First Fallback**: Search using the first word of the term
+2. **Second Fallback**: Return a manual entry option:
+
+```json
+{
+  "code": null,
+  "term": "término sin coincidencia",
+  "level": "MANUAL",
+  "source": "manual",
+  "why": "Sin coincidencia en MedDRA. Ingreso manual."
+}
+```
+
+---
+
+### Direct MedDRA Search (Manual)
+
+<Card title="GET /meddra/suggest" icon="magnifying-glass">
+  Direct search endpoint for manual MedDRA term lookup.
+</Card>
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `q` | string | Yes | - | Search query |
+| `limit` | integer | No | 15 | Max results (1-100) |
+| `scope` | string | No | "all" | Level scope (`all`, `llt`, `pt`, `hlt`, `hlgt`, `soc`) |
+| `version_id` | integer | No | null | MedDRA version ID |
+
+**Example:**
+
+```bash
+GET /api/v1/meddra/suggest?q=cardio&limit=10&scope=pt
+```
+
+**Response:** `200 OK`
+
+```json
+{
+  "suggestions": [
+    {
+      "code": 10007515,
+      "term": "Paro cardíaco",
+      "level": "PT",
+      "pt_code": 10007515,
+      "pt_term": "Paro cardíaco",
+      "primary_soc": 10007541,
+      "primary_soc_name": "Trastornos cardíacos",
+      "source": "db"
+    },
+    {
+      "code": 10007542,
+      "term": "Arritmia cardíaca",
+      "level": "PT",
+      "pt_code": 10007542,
+      "pt_term": "Arritmia cardíaca",
+      "primary_soc": 10007541,
+      "primary_soc_name": "Trastornos cardíacos",
+      "source": "db"
+    }
+  ]
+}
+```
+
+---
+
+## Search Algorithm
+
+The MedDRA search implements intelligent ranking and filtering:
+
+### 1. Database Query
+
+- Uses PostgreSQL `ILIKE` with `unaccent` extension for accent-insensitive search
+- Searches across term names at the specified hierarchy level(s)
+
+### 2. Anti-Substring Filtering
+
+Prevents false positives from substring matches (e.g., "picar" matching "epiCARdio"):
+
+- **Exact Match**: Normalized query equals normalized term
+- **Whole Word Match**: Query appears as complete word (word boundary check)
+- **Prefix Match**: For queries ≥4 chars, allows token prefix match ("pruri" → "prurito")
+- **Rejected**: Substring within another word ("picar" within "epicardio")
+
+### 3. Ranking
+
+Results are ranked by match quality:
+
+| Rank | Type | Example |
+|------|------|----------|
+| 0 | Exact match | "prurito" = "Prurito" |
+| 1 | Whole word present | "prurito" in "Prurito generalizado" |
+| 2 | Prefix match (≥4 chars) | "pruri" → "Prurito" |
+| 3 | Substring fallback | "pru" in "Prurito" |
+
+Secondary sort: term length (shorter terms ranked higher)
+
+---
+
+## AI Synonym Expansion
+
+When using `/meddra/options`, the API generates clinical synonyms to improve search coverage:
+
+**Synonym Rules:**
+
+- Maximum 6 variants per term
+- Same semantic meaning (no new events)
+- Verb-to-noun transformations allowed ("picar" → "picazón", "prurito")
+- No invented diagnoses
+- No added qualifiers (no "generalizado" unless in base term)
+- Short variants (1-4 words)
+
+**Example Expansions:**
+
+- "picar" → ["picar", "picazón", "prurito", "picor"]
+- "vómito" → ["vómito", "vómitos", "emesis"]
+- "dolor de cabeza" → ["dolor de cabeza", "cefalea", "cefalalgia"]
+
+---
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | Yes | - | OpenAI API key for GPT models |
+| `OPENAI_MEDDRA_MODEL` | No | `gpt-4o-mini` | GPT model for MedDRA operations |
+
+---
+
+## Error Handling
+
+**500 Internal Server Error** - Missing `OPENAI_API_KEY`:
+
+```json
+{
+  "detail": "OPENAI_API_KEY no configurada"
+}
+```
+
+**400 Bad Request** - Invalid request format:
+
+```json
+{
+  "detail": "terms debe ser lista"
+}
+```
+
+**422 Unprocessable Entity** - Missing required parameters:
+
+```json
+{
+  "detail": "q is required"
+}
+```

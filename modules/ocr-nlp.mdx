@@ -1,0 +1,640 @@
+---
+title: 'OCR & NLP Module'
+description: 'AI-powered text extraction, entity recognition, and translation for adverse event reports'
+icon: 'brain'
+---
+
+## Overview
+
+The OCR & NLP module provides intelligent document processing capabilities, combining Tesseract OCR, Gemini AI extraction, and multi-provider translation services to transform unstructured adverse event reports into structured ICSR data.
+
+## Architecture
+
+<Steps>
+  <Step title="Document Ingestion">
+    PDF or image files enter the OCR pipeline
+  </Step>
+  <Step title="Text Extraction">
+    Tesseract OCR with preprocessing (OpenCV)
+  </Step>
+  <Step title="Language Detection & Translation">
+    Automatic language detection with Google/Gemini translation
+  </Step>
+  <Step title="Entity Recognition">
+    Gemini AI or rule-based extraction of ICSR fields
+  </Step>
+  <Step title="Normalization">
+    Field validation and standardization
+  </Step>
+</Steps>
+
+## OCR Engine
+
+### Tesseract Configuration
+
+The OCR service (`backend/app/services/ocr_service.py`) uses Tesseract 5.x with LSTM neural network mode.
+
+```python OCR Engine Setup
+# Automatic tesseract path resolution
+candidates = [
+    os.getenv("TESSERACT_CMD"),
+    shutil.which("tesseract"),
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+]
+pytesseract.pytesseract.tesseract_cmd = next(c for c in candidates if c and os.path.exists(c))
+
+# OCR configuration
+OCR_CONFIG = "--oem 3 --psm 6"
+# OEM 3: Default LSTM neural net mode
+# PSM 6: Assume uniform block of text
+```
+
+<Note>
+The system attempts Spanish (`spa`) first, then Spanish+English (`spa+eng`), and finally English (`eng`) for maximum accuracy.
+</Note>
+
+### Image Preprocessing
+
+OpenCV preprocessing pipeline for optimal OCR results:
+
+```python Image Enhancement (backend/app/services/ocr_service.py:76)
+import cv2
+from PIL import Image
+
+def _ocr_image(image_path: str) -> str:
+    # Load image
+    img = cv2.imread(image_path)
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Otsu's binarization for adaptive thresholding
+    _, binary = cv2.threshold(
+        gray, 0, 255, 
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    
+    # Convert to PIL for Tesseract
+    pil_image = Image.fromarray(binary)
+    
+    # Multi-language OCR
+    for lang in ("spa", "spa+eng", "eng"):
+        try:
+            return pytesseract.image_to_string(pil_image, lang=lang)
+        except:
+            continue
+```
+
+**Preprocessing Benefits:**
+- **Noise reduction**: Removes artifacts from scanning
+- **Contrast enhancement**: Makes text clearer
+- **Binarization**: Converts to pure black/white
+- **Adaptive thresholding**: Handles varying lighting
+
+### PDF Processing
+
+Two-tier approach for maximum compatibility:
+
+<Tabs>
+  <Tab title="Primary: pdf2image">
+```python PDF to Image Pipeline
+import pdf2image
+
+# Convert PDF pages to PIL images
+pages = pdf2image.convert_from_path(
+    pdf_path,
+    poppler_path=os.getenv("POPPLER_PATH"),  # Optional
+    dpi=200  # Higher = better quality, slower
+)
+
+# OCR each page
+text_pages = []
+for page_image in pages:
+    text = pytesseract.image_to_string(page_image, lang="spa")
+    text_pages.append(text)
+
+full_text = "\n".join(text_pages)
+```
+  </Tab>
+  
+  <Tab title="Fallback: PyMuPDF">
+```python Direct PDF Rasterization
+import fitz  # PyMuPDF
+import io
+from PIL import Image
+
+doc = fitz.open(pdf_path)
+text_pages = []
+
+for i in range(doc.page_count):
+    page = doc.load_page(i)
+    
+    # Render at 200 DPI
+    pix = page.get_pixmap(dpi=200)
+    
+    # Convert to PIL
+    img = Image.open(io.BytesIO(pix.tobytes("png")))
+    
+    # OCR
+    text = pytesseract.image_to_string(img, lang="spa")
+    text_pages.append(text)
+
+doc.close()
+```
+  </Tab>
+</Tabs>
+
+## NLP Extraction
+
+### Gemini AI Extractor
+
+The Gemini extractor (`backend/app/services/gemini_extractor.py`) provides two-phase intelligent processing.
+
+#### Phase 1: Triage Gate
+
+Determines if text contains an adverse event report:
+
+```python Gate Prompt (backend/app/services/gemini_extractor.py:474)
+PROMPT_GATE = (
+    "Eres un triage de farmacovigilancia.\n"
+    "Responde SOLO JSON: {\"es_reporte\": true|false, \"razon\": \"string\"}\n"
+    "Texto:\n"
+)
+
+# Usage
+is_report, reason = gemini_should_ingest(email_text)
+if not is_report:
+    print(f"Rejected: {reason}")  # e.g., "No menciona medicamento ni síntomas"
+```
+
+**Heuristic Fallback** (when AI unavailable):
+
+```python Rule-Based Gate (backend/app/services/gemini_extractor.py:486)
+SYMPTOMS_RE = re.compile(
+    r"\b(erupci[oó]n|sarpullido|prurito|fiebre|dolor|v[oó]mit|"
+    r"n[aá]usea|mareo|urticaria|shock|anafilax|sangrado|diarrea)",
+    re.I
+)
+
+DRUG_FORM_RE = re.compile(
+    r"\b(mg|ml|tableta|c[aá]psula|inyecci[oó]n|vacuna|gel|crema|spray)",
+    re.I
+)
+
+# Positive if: 40+ chars + symptoms + drug form
+if len(text) >= 40 and SYMPTOMS_RE.search(text) and DRUG_FORM_RE.search(text):
+    return True, "heurística positiva"
+```
+
+#### Phase 2: Field Extraction
+
+Extracts structured ICSR fields:
+
+```python Extract Prompt (backend/app/services/gemini_extractor.py:493)
+PROMPT_EXTRACT = (
+    "Eres un extractor ICSR.\n"
+    "Devuelve SOLO JSON estricto con claves presentes (no inventes valores).\n"
+    "Si puedes, incluye: paciente_iniciales, paciente_edad, paciente_sexo, "
+    "paciente_gestante, paciente_peso, reportante_nombre, reportante_contacto, "
+    "producto_sospechoso, fecha_inicio_evento (YYYY-MM-DD), descripcion_evento, "
+    "gravedad (Leve/Moderada/Grave).\n"
+    "Texto:\n"
+)
+
+# Example output
+{
+    "paciente_iniciales": "J.D.",
+    "paciente_edad": 45,
+    "paciente_sexo": "M",
+    "paciente_peso": 72.5,
+    "producto_sospechoso": "Ibuprofeno 400 mg",
+    "fecha_inicio_evento": "2025-03-01",
+    "descripcion_evento": "Presentó urticaria generalizada 2 horas después de la dosis",
+    "gravedad": "Moderada",
+    "reportante_nombre": "Dra. María García",
+    "reportante_contacto": "m.garcia@hospital.pe"
+}
+```
+
+### Rule-Based Extraction (Fallback)
+
+The NLP service (`backend/app/services/nlp_service.py`) provides regex-based extraction when AI is unavailable.
+
+<AccordionGroup>
+  <Accordion title="Patient Initials" icon="id-card">
+```python Initials Pattern (backend/app/services/nlp_service.py:68)
+# Pattern 1: Explicit label
+"Iniciales: J.D."
+"Iniciales del paciente: AB"
+
+# Pattern 2: From full name
+"Paciente: Juan David Pérez" → "J.D."
+
+# Regex
+re.search(
+    r"\biniciales(?:\s+del\s+paciente)?\s*[:\-]?\s*([A-ZÁÉÍÓÚÑ]{1,2})",
+    text
+)
+```
+  </Accordion>
+  
+  <Accordion title="Age & Weight" icon="weight-scale">
+```python Numeric Extraction (backend/app/services/nlp_service.py:44)
+# Age: "45 años", "de 45 años", "45 yo"
+re.search(r"\b(?:de\s*)?(\d{1,3})\s*(?:años|año|yo)\b", text, re.I)
+
+# Weight: "peso: 72 kg", "peso 72.5kg"
+re.search(
+    r"\bpeso\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:kg|kilos?)\b",
+    text,
+    re.I
+)
+```
+  </Accordion>
+  
+  <Accordion title="Product & Event" icon="pills">
+```python Medical Entity Recognition (backend/app/services/nlp_service.py:108)
+# Suspect product
+pattern = re.compile(
+    r"(?:uso|administraci[oó]n|ingesti[oó]n|tom[oó]|recibi[oó])\s+de\s+"
+    r"([A-ZÁÉÍÓÚÑ][\w\-]*(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ0-9\-]+)*"
+    r"\s*(?:\d+(?:[.,]\d+)?\s*(?:mg|g|mcg|ml))?)\b",
+    re.I
+)
+
+# Adverse event
+event_pattern = re.compile(
+    r"\b(anafilaxia|urticaria|rash|exantema|erupci[oó]n|prurito|edema)\b",
+    re.I
+)
+```
+  </Accordion>
+  
+  <Accordion title="Date Parsing" icon="calendar">
+```python Date Normalization (backend/app/services/nlp_service.py:18)
+# Formats supported:
+# - ISO: 2025-03-01
+# - DMY: 01/03/2025, 01-03-2025
+# - Relative: "este año" + "10 de marzo"
+
+def _to_iso_date(s: str) -> Optional[str]:
+    # ISO format
+    m = re.search(r"\b(\d{4})[-/](\d{2})[-/](\d{2})\b", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    
+    # DMY format
+    m = re.search(r"\b(\d{2})[/-](\d{2})[/-](\d{4})\b", s)
+    if m:
+        day, month, year = m.groups()
+        return f"{year}-{month}-{day}"
+```
+  </Accordion>
+</AccordionGroup>
+
+## Data Normalization
+
+All extracted fields undergo normalization for consistency:
+
+### Sex Normalization
+
+```python Sex Classification (backend/app/services/gemini_extractor.py:168)
+F_PRONOUNS_RE = re.compile(
+    r"\b(ella|srta\.?|señora|la\s+paciente|mi\s+hermana)\b",
+    re.I
+)
+M_PRONOUNS_RE = re.compile(
+    r"\b(él|sr\.?|señor|el\s+paciente|mi\s+hermano)\b",
+    re.I
+)
+PREGNANT_POS_RE = re.compile(
+    r"\b(gestante|embarazada|embarazo|pregnant)\b",
+    re.I
+)
+
+def _sexo_detalle_label(sexo_char, email_text, model_gestante):
+    if sexo_char == "M":
+        return "Masculino"
+    
+    if sexo_char == "F":
+        if model_gestante is True:
+            return "Femenino gestante"
+        if model_gestante is False:
+            return "Femenino no gestante"
+        if PREGNANT_POS_RE.search(email_text):
+            return "Femenino gestante"
+        return "Femenino"
+    
+    # Inference from text
+    if F_PRONOUNS_RE.search(email_text):
+        if PREGNANT_POS_RE.search(email_text):
+            return "Femenino gestante"
+        return "Femenino"
+    
+    if M_PRONOUNS_RE.search(email_text):
+        return "Masculino"
+    
+    return "Desconocido"
+```
+
+### Weight & Age Normalization
+
+```python Numeric Validation (backend/app/services/gemini_extractor.py:203)
+def _norm_peso(v: Any) -> Optional[float]:
+    """Normalize weight, handle g→kg conversion"""
+    if isinstance(v, (int, float)):
+        f = float(v)
+        if f > 300:  # Likely grams
+            return round(f / 1000.0, 2)
+        return round(f, 2)
+    
+    # Parse from string
+    s = str(v).lower()
+    num = _to_number(s)  # Extract first number
+    if "g" in s or "gramo" in s:
+        return round(num / 1000.0, 2)
+    return round(num, 2)
+
+def _norm_edad(v: Any) -> int:
+    """Validate age, use 30 as default"""
+    n = _to_number(v)
+    if n is None or n < 0 or n > 120:
+        return 30
+    return int(round(n))
+```
+
+### Date & Severity Normalization
+
+```python Context-Aware Normalization (backend/app/services/gemini_extractor.py:261)
+def _norm_fecha(fecha_str, email_text):
+    """Parse dates with 'este año' context awareness"""
+    force_current_year = ("este año" in email_text.lower())
+    
+    # Try ISO format first
+    try:
+        d = datetime.fromisoformat(fecha_str).date()
+        if force_current_year and d.year != datetime.now().year:
+            d = d.replace(year=datetime.now().year)
+        return d.strftime("%Y-%m-%d")
+    except:
+        pass
+    
+    # Try DMY format
+    m = re.match(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", fecha_str)
+    if m:
+        day, month, year = map(int, m.groups())
+        if force_current_year:
+            year = datetime.now().year
+        elif year < 100:
+            year += 2000
+        return datetime(year, month, day).strftime("%Y-%m-%d")
+
+def _norm_gravedad(g, source_text):
+    """Classify severity with text analysis"""
+    val = str(g or "").strip().lower()
+    
+    # Explicit values
+    if val in {"leve", "ligera", "mild"}:
+        return "Leve"
+    if val.startswith("modera"):
+        return "Moderada"
+    if val in {"grave", "severa", "severe"}:
+        return "Grave"
+    
+    # Context clues
+    txt = source_text.lower()
+    if re.search(r"\bhospital|uci|urgencia|shock|muerte\b", txt):
+        return "Grave"
+    if re.search(r"\bmoderad", txt):
+        return "Moderada"
+    
+    return "Leve"  # Conservative default
+```
+
+## Translation Service
+
+The translator (`backend/app/services/translator.py`) provides multi-provider translation with fallbacks.
+
+<Tabs>
+  <Tab title="Configuration">
+```bash Translation Setup
+VIGIA_TRANSLATE="1"  # Enable translation
+
+# Provider 1: Google Translate (via deep-translator)
+pip install deep-translator
+
+# Provider 2: Gemini AI (fallback)
+GEMINI_API_KEY="AIzaSy..."
+GEMINI_MODEL="gemini-1.5-pro"
+```
+  </Tab>
+  
+  <Tab title="Usage">
+```python Translation API
+from app.services.translator import translate_en_to_es, translate_es_to_en
+
+# English → Spanish
+text_es = translate_en_to_es("Urticaria and pruritus after drug intake")
+# → "Urticaria y prurito tras la ingesta del medicamento"
+
+# Spanish → English (with context)
+text_en = translate_es_to_en("presentó tos")
+# → "presented cough"  (NOT "Terms of Service")
+```
+  </Tab>
+</Tabs>
+
+**Translation Strategy:**
+
+<Steps>
+  <Step title="Google Translate (Primary)">
+    Fast, free, forced source language to avoid ambiguity
+  </Step>
+  <Step title="Google Auto-Detect (Secondary)">
+    Fallback with automatic language detection
+  </Step>
+  <Step title="Gemini AI (Tertiary)">
+    High-quality translation with medical terminology awareness
+  </Step>
+  <Step title="Original Text (Final)">
+    Return untranslated if all providers fail
+  </Step>
+</Steps>
+
+<Warning>
+Force Spanish source language (`source='es'`) when translating ES→EN to prevent false positives like "tos" → "TOS" (Terms of Service).
+</Warning>
+
+## Model Configuration
+
+### OpenAI / Gemini Model Selection
+
+```python Model Priority (backend/app/services/gemini_extractor.py:35)
+# Single model (fallback)
+OPENAI_MODEL_EXTRACT="gpt-4o-mini"
+OPENAI_MODEL_GATE="gpt-4o-mini"
+
+# Multi-model cascade (recommended)
+OPENAI_MODEL_LIST_EXTRACT="gpt-4.1,gpt-4o,gpt-4o-mini"
+OPENAI_MODEL_LIST_GATE="gpt-4o-mini,gpt-4.1"
+
+# Timeout & retries
+OPENAI_TIMEOUT="20"  # seconds
+OPENAI_MAX_RETRIES="2"
+```
+
+**Model Selection Logic:**
+1. Try each model in the list sequentially
+2. Use first successful response
+3. Log failures for monitoring
+4. Fall back to rule-based extraction if all fail
+
+## Performance Optimization
+
+<CardGroup cols={2}>
+  <Card title="OCR Caching" icon="bolt">
+    ```python
+    # Cache OCR results by file hash
+    @lru_cache(maxsize=1024)
+    def ocr_file_cached(file_hash: str) -> str:
+        return ocr_file(file_path)
+    ```
+  </Card>
+  
+  <Card title="Translation Caching" icon="language">
+    ```python Translation Cache (backend/app/services/translator.py:57)
+    @lru_cache(maxsize=2048)
+    def _norm_cache_key(text: str) -> str:
+        return " ".join(text.split())  # Normalize whitespace
+    
+    @lru_cache(maxsize=512)
+    def translate_en_to_es(text: str) -> str:
+        # Cached by normalized key
+    ```
+  </Card>
+  
+  <Card title="Batch Processing" icon="layer-group">
+    ```python
+    # Process multiple documents in parallel
+    from concurrent.futures import ThreadPoolExecutor
+    
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        texts = executor.map(ocr_file, pdf_paths)
+    ```
+  </Card>
+  
+  <Card title="Model Warm-Up" icon="fire">
+    ```python
+    # Pre-load models on startup
+    def warm_up_ai():
+        dummy = "Prueba de conectividad"
+        gemini_should_ingest(dummy)
+        gemini_extract_fields(dummy)
+    ```
+  </Card>
+</CardGroup>
+
+## Monitoring & Debugging
+
+### LLM Usage Tracking
+
+```python Track Model Usage (backend/app/services/gemini_extractor.py:466)
+from app.services.gemini_extractor import current_llm_info
+
+# After extraction
+info = current_llm_info()
+print(info)
+# {"provider": "openai", "model": "gpt-4.1"}
+
+# Self-test endpoint
+from app.services.gemini_extractor import llm_selftest
+
+result = llm_selftest("Paciente con urticaria tras Ibuprofeno 400mg")
+print(result)
+# {
+#   "gate_ok": True,
+#   "gate_reason": "Menciona medicamento y síntoma",
+#   "extract": {"paciente_edad": 30, "producto_sospechoso": "Ibuprofeno 400mg", ...},
+#   "llm": {"provider": "openai", "model": "gpt-4.1"}
+# }
+```
+
+### OCR Quality Assessment
+
+```python OCR Confidence Scores
+import pytesseract
+from PIL import Image
+
+# Get detailed OCR data
+data = pytesseract.image_to_data(
+    Image.open("report.jpg"),
+    lang="spa",
+    output_type=pytesseract.Output.DICT
+)
+
+# Filter low-confidence words
+for i, conf in enumerate(data['conf']):
+    if int(conf) < 60:  # 0-100 scale
+        print(f"Low confidence: {data['text'][i]} ({conf}%)")
+```
+
+## API Reference
+
+<ParamField path="ocr_file(path: str)" type="function">
+  Extract text from image or PDF file
+  
+  **Returns:** `str` - Extracted text
+  
+  **Supported formats:** .png, .jpg, .jpeg, .webp, .tif, .tiff, .pdf
+</ParamField>
+
+<ParamField path="gemini_should_ingest(email_text: str)" type="function">
+  Determine if text contains adverse event report
+  
+  **Returns:** `Tuple[bool, str]` - (is_report, reason)
+</ParamField>
+
+<ParamField path="gemini_extract_fields(email_text: str, sender_email: str)" type="function">
+  Extract and normalize ICSR fields from text
+  
+  **Returns:** `Dict[str, Any]` - Normalized field dictionary
+</ParamField>
+
+<ParamField path="translate_en_to_es(text: str)" type="function">
+  Translate English to Spanish (medical context)
+  
+  **Returns:** `str` - Translated text (or original if translation fails)
+</ParamField>
+
+## Best Practices
+
+<Check>
+**Do:**
+- Use 300+ DPI scans for optimal OCR accuracy
+- Enable AI extraction for complex narratives
+- Configure model cascades for reliability
+- Cache translations for repeated terms
+- Monitor AI costs with usage tracking
+- Validate extracted fields before ICSR creation
+</Check>
+
+<Warning>
+**Don't:**
+- Process handwritten reports (OCR not reliable)
+- Skip normalization (causes downstream validation errors)
+- Use single AI model without fallback
+- Translate already-Spanish text (wastes API calls)
+- Trust extraction confidence scores < 70%
+- Store API keys in code (use environment variables)
+</Warning>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Ingestion Module" icon="inbox" href="/modules/ingestion">
+    End-to-end document processing pipeline
+  </Card>
+  <Card title="AI Configuration" icon="robot" href="/essentials/ai-setup">
+    Gemini and OpenAI API setup guide
+  </Card>
+</CardGroup>

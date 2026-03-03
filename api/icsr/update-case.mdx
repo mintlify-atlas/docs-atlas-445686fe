@@ -1,0 +1,609 @@
+---
+title: 'Update ICSR Case'
+api: 'PUT /api/v1/icsr/{icsr_id}'
+description: 'Update an existing ICSR case with modified patient, product, or event information'
+---
+
+## Endpoints
+
+### Get Case Details
+
+```
+GET /api/v1/icsr/{icsr_id}
+```
+
+Retrieves complete case details with enriched product catalog data.
+
+**Authentication**: Requires permission `icsr:read`
+
+### Update Case (Partial)
+
+```
+PUT /api/v1/icsr/{icsr_id}
+```
+
+Updates only the fields provided in the request body. Nested arrays (productos, concomitantes, seguimientos) are only replaced if explicitly included.
+
+**Authentication**: Requires permission `icsr:update`
+
+### Update Case (Full Replace)
+
+```
+PUT /api/v1/icsr/{icsr_id}/full
+```
+
+Always replaces nested arrays (productos, concomitantes, seguimientos) even if not modified. Use this for complete form submissions.
+
+**Authentication**: Requires permission `icsr:update`
+
+## Path Parameters
+
+<ParamField path="icsr_id" type="integer" required>
+  The unique identifier of the ICSR case to update
+</ParamField>
+
+## Request Body
+
+All fields from the [Create Case](/api/icsr/create-case) endpoint are supported. Only include fields you want to update.
+
+### Common Update Scenarios
+
+<ParamField body="estado" type="string">
+  Update case status (e.g., from "Pendiente" to "En progreso" to "Cerrado")
+</ParamField>
+
+<ParamField body="gravedad" type="string">
+  Update severity classification after initial assessment
+</ParamField>
+
+<ParamField body="ea_causalidad" type="string">
+  Update causality assessment (e.g., "Posible" → "Probable" → "Definitiva")
+</ParamField>
+
+<ParamField body="ea_desenlace" type="string">
+  Update event outcome as case progresses
+</ParamField>
+
+<ParamField body="qc_realizado_por" type="string">
+  Record who performed quality control review
+</ParamField>
+
+<ParamField body="qc_fecha" type="string" format="date">
+  Record when quality control was performed
+</ParamField>
+
+<ParamField body="lt_fecha_envio_digemid" type="string" format="date">
+  Record actual DIGEMID submission date
+</ParamField>
+
+<ParamField body="revision_senales" type="string">
+  Add signal detection notes
+</ParamField>
+
+<ParamField body="comentarios_adicionales" type="string">
+  Add additional case notes or comments
+</ParamField>
+
+### Updating Nested Arrays
+
+<ParamField body="productos" type="array">
+  Replace all suspected products. Must include complete product objects with all desired fields.
+</ParamField>
+
+<ParamField body="concomitantes" type="array">
+  Replace all concomitant medications. Must include complete objects.
+</ParamField>
+
+<ParamField body="seguimientos" type="array">
+  Replace all followup entries. Must include complete objects.
+</ParamField>
+
+## Response (GET)
+
+### Get Case Details Response
+
+<ResponseField name="id" type="integer">
+  Case identifier
+</ResponseField>
+
+<ResponseField name="created_at" type="string" format="datetime">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="rs_catalog_map" type="object">
+  Map of sanitary registration numbers to enriched product data from the catalog. Key is normalized registration number.
+  
+  <Expandable title="Catalog Entry Schema">
+    <ResponseField name="laboratorio" type="string">
+      Laboratory/manufacturer name from product catalog
+    </ResponseField>
+    
+    <ResponseField name="rs_vencimiento" type="string" format="date">
+      Registration expiration date from product catalog
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="paciente_iniciales" type="string">
+  Patient initials
+</ResponseField>
+
+<ResponseField name="productos" type="array">
+  Array of suspected products. Each product may include enriched `laboratorio` and `rs_vencimiento` fields from catalog if `registro_sanitario` matches.
+</ResponseField>
+
+<ResponseField name="concomitantes" type="array">
+  Array of concomitant medications
+</ResponseField>
+
+<ResponseField name="seguimientos" type="array">
+  Array of followup entries
+</ResponseField>
+
+<ResponseField name="eventos" type="array">
+  Array of adverse events (see [Events API](/api/icsr/events))
+</ResponseField>
+
+All other fields from the create response are included.
+
+## Response (PUT)
+
+Returns the complete updated ICSR object with the same schema as GET.
+
+## Behavior
+
+### Partial Update (PUT /icsr/{id})
+
+- Only updates fields that are explicitly included in the request
+- Omitted fields retain their current values
+- Nested arrays (productos, concomitantes, seguimientos) are only replaced if the array field is included in the request
+- If you include `productos: []` (empty array), all products will be deleted
+
+### Full Update (PUT /icsr/{id}/full)
+
+- Updates all provided scalar fields
+- **Always** replaces productos, concomitantes, and seguimientos arrays, even if not modified
+- Recommended for frontend form submissions where the complete state is always known
+
+### Audit Trail
+
+- All updates are logged with field-level change tracking
+- The audit log captures:
+  - User who made the change
+  - Timestamp
+  - Before/after values for each changed field
+  - Nested array changes (additions/removals)
+
+### Auto-Processing
+
+When a case is updated:
+
+1. **Missing Data Check**: If required fields are now complete, no further auto-reply is sent. If new fields are missing, an auto-reply may be triggered.
+
+2. **Status Progression**: If a followup message is sent or evaluation is created, status automatically changes from "Pendiente" to "En progreso".
+
+3. **Catalog Enrichment**: Product data is automatically enriched from the product catalog based on `registro_sanitario` matching.
+
+## Example Requests
+
+### Update Case Status Only
+
+```json
+PUT /api/v1/icsr/1234
+
+{
+  "estado": "Cerrado",
+  "comentarios_adicionales": "Caso cerrado tras evaluación completa. Causalidad confirmada como Probable."
+}
+```
+
+### Update Causality Assessment
+
+```json
+PUT /api/v1/icsr/1234
+
+{
+  "ea_causalidad": "Probable",
+  "ea_desenlace": "Recuperado",
+  "qc_realizado_por": "Dr. Juan Perez",
+  "qc_fecha": "2024-01-25"
+}
+```
+
+### Add Quality Control Data
+
+```json
+PUT /api/v1/icsr/1234
+
+{
+  "qc_realizado_por": "Maria Garcia",
+  "qc_fecha": "2024-01-22",
+  "revision_senales": "No se identificaron señales nuevas. Evento conocido para amoxicilina.",
+  "comentarios_adicionales": "Documentación completa. Listo para envío a DIGEMID."
+}
+```
+
+### Update Products Array
+
+```json
+PUT /api/v1/icsr/1234
+
+{
+  "productos": [
+    {
+      "nombre_producto": "Amoxicilina",
+      "ifa": "Amoxicilina trihidratada",
+      "forma_farmaceutica": "Cápsula",
+      "laboratorio_pais": "Laboratorio XYZ - Perú",
+      "registro_sanitario": "EE-123456",
+      "nro_lote": "LOT2024-002",
+      "via_administracion": "Oral",
+      "dosis_frecuencia": "500mg cada 8 horas",
+      "fecha_inicio": "2024-01-12",
+      "fecha_fin": "2024-01-16",
+      "desaparecio_al_suspender": "si"
+    },
+    {
+      "nombre_producto": "Amoxicilina + Ácido clavulánico",
+      "ifa": "Amoxicilina trihidratada + Clavulanato de potasio",
+      "forma_farmaceutica": "Tableta",
+      "via_administracion": "Oral",
+      "dosis_frecuencia": "875/125mg cada 12 horas",
+      "fecha_inicio": "2024-01-16"
+    }
+  ]
+}
+```
+
+### Complete Form Submission (Full Update)
+
+```json
+PUT /api/v1/icsr/1234/full
+
+{
+  "paciente_iniciales": "JD",
+  "paciente_edad": 45,
+  "paciente_sexo": "M",
+  "paciente_peso": 72.5,
+  "reportante_nombre": "Dr. Maria Garcia",
+  "reportante_email": "mgarcia@hospital.com",
+  "producto_sospechoso": "Amoxicilina 500mg",
+  "descripcion_evento": "Paciente desarrolló rash eritematoso generalizado 3 días después de iniciar tratamiento con amoxicilina. El rash fue pruriginoso y se resolvió tras suspender el medicamento.",
+  "fecha_inicio_evento": "2024-01-15",
+  "fecha_fin_evento": "2024-01-18",
+  "gravedad": "No grave",
+  "ea_causalidad": "Probable",
+  "ea_desenlace": "Recuperado",
+  "estado": "Cerrado",
+  "productos": [
+    {
+      "nombre_producto": "Amoxicilina",
+      "ifa": "Amoxicilina trihidratada",
+      "registro_sanitario": "EE-123456",
+      "nro_lote": "LOT2024-001",
+      "via_administracion": "Oral",
+      "dosis_frecuencia": "500mg cada 8 horas",
+      "fecha_inicio": "2024-01-12",
+      "fecha_fin": "2024-01-16",
+      "desaparecio_al_suspender": "si"
+    }
+  ],
+  "concomitantes": [],
+  "seguimientos": []
+}
+```
+
+## Example Response (GET)
+
+```json
+{
+  "id": 1234,
+  "created_at": "2024-01-20T10:30:00Z",
+  "paciente_iniciales": "JD",
+  "paciente_edad": 45,
+  "paciente_sexo": "M",
+  "paciente_peso": 72.5,
+  "reportante_nombre": "Dr. Maria Garcia",
+  "reportante_email": "mgarcia@hospital.com",
+  "producto_sospechoso": "Amoxicilina 500mg",
+  "descripcion_evento": "Paciente desarrolló rash eritematoso generalizado...",
+  "fecha_inicio_evento": "2024-01-15",
+  "fecha_fin_evento": "2024-01-18",
+  "gravedad": "No grave",
+  "ea_causalidad": "Probable",
+  "ea_desenlace": "Recuperado",
+  "estado": "Cerrado",
+  "qc_realizado_por": "Dr. Juan Perez",
+  "qc_fecha": "2024-01-25",
+  "rs_catalog_map": {
+    "EE123456": {
+      "laboratorio": "Laboratorio ABC S.A.",
+      "rs_vencimiento": "2026-12-31"
+    }
+  },
+  "productos": [
+    {
+      "id": 5678,
+      "nombre_producto": "Amoxicilina",
+      "ifa": "Amoxicilina trihidratada",
+      "forma_farmaceutica": "Tableta",
+      "laboratorio_pais": "Laboratorio ABC - Perú",
+      "registro_sanitario": "EE-123456",
+      "nro_lote": "LOT2024-001",
+      "via_administracion": "Oral",
+      "dosis_frecuencia": "500mg cada 8 horas",
+      "fecha_inicio": "2024-01-12",
+      "fecha_fin": "2024-01-16",
+      "desaparecio_al_suspender": "si",
+      "reaparecio_reexposicion": "no_aplica",
+      "laboratorio": "Laboratorio ABC S.A.",
+      "rs_vencimiento": "2026-12-31"
+    }
+  ],
+  "concomitantes": [
+    {
+      "id": 9012,
+      "nombre_producto": "Paracetamol",
+      "dosis_frecuencia": "500mg PRN",
+      "via_administracion": "Oral",
+      "motivo_prescripcion": "Fiebre"
+    }
+  ],
+  "seguimientos": [],
+  "eventos": [
+    {
+      "id": 3456,
+      "icsr_id": 1234,
+      "texto": "Rash eritematoso generalizado",
+      "tipo_notificacion": "Inicial",
+      "fecha_inicio": "2024-01-15",
+      "fecha_fin": "2024-01-18",
+      "gravedad": "No grave",
+      "causalidad": "Probable",
+      "desenlace": "Recuperado",
+      "meddra_pt_code": "10037844",
+      "meddra_pt_term": "Rash",
+      "is_from_narrative": true
+    }
+  ]
+}
+```
+
+## Delete Case
+
+```
+DELETE /api/v1/icsr/{icsr_id}
+POST /api/v1/icsr/{icsr_id}:delete
+```
+
+**Authentication**: Requires permission `icsr:delete` and password confirmation
+
+### Request Body (Delete)
+
+<ParamField body="password" type="string" required>
+  Current user's password for confirmation
+</ParamField>
+
+### Delete Summary
+
+Before deleting, check what will be removed:
+
+```
+GET /api/v1/icsr/{icsr_id}/delete-summary
+```
+
+**Response**:
+
+```json
+{
+  "followups": 5,
+  "snapshots": 3
+}
+```
+
+### Delete Behavior
+
+- Requires password confirmation for security
+- Cascades to delete all related records:
+  - Adverse events (icsr_eventos)
+  - Products (icsr_productos)
+  - Concomitant medications (icsr_concomitantes)
+  - Followup tracking (icsr_seguimientos)
+  - Followup messages (followup_messages)
+  - Case snapshots (icsr_detail_snapshots)
+- Cannot be undone
+- Audit log entry is created before deletion
+
+### Example Delete Request
+
+```json
+DELETE /api/v1/icsr/1234
+
+{
+  "password": "my_secure_password"
+}
+```
+
+### Delete Response
+
+```json
+{
+  "ok": true,
+  "deleted_id": 1234
+}
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "paciente_edad"],
+      "msg": "value is not a valid integer",
+      "type": "type_error.integer"
+    }
+  ]
+}
+```
+
+### 401 Unauthorized (Delete)
+
+```json
+{
+  "detail": "Credenciales inválidas"
+}
+```
+
+### 404 Not Found
+
+```json
+{
+  "detail": "ICSR no encontrado"
+}
+```
+
+### 409 Conflict (Delete)
+
+```json
+{
+  "detail": "No se puede eliminar por otras restricciones. Considera soft-delete o ON DELETE CASCADE."
+}
+```
+
+## Validation
+
+The API validates:
+
+- Case exists before updating
+- User has appropriate permissions
+- Data types match schema
+- Nested objects contain required fields
+- Date formats are valid ISO-8601
+- Referenced products exist in catalog (optional validation)
+
+## Best Practices
+
+### When to Use Partial Update
+
+- Updating case status or workflow fields
+- Adding QC review data
+- Updating timeline dates
+- Making small corrections
+
+### When to Use Full Update
+
+- Form submissions from frontend
+- Bulk data imports
+- When you always have the complete case state
+- Ensuring consistency across related fields
+
+### Updating Nested Arrays
+
+1. **Get current state**: Always GET the case first to retrieve current productos/concomitantes/seguimientos
+2. **Modify locally**: Make changes to the array in your application
+3. **Send complete array**: Send the full modified array in the update request
+4. **Never send partial arrays**: Sending `[{"nombre_producto": "X"}]` will delete all other products
+
+## Related Endpoints
+
+- [Create Case](/api/icsr/create-case) - Create new ICSR
+- [List Cases](/api/icsr/list-cases) - Query cases
+- [Manage Events](/api/icsr/events) - Update adverse events
+- [Duplicate Detection](#duplicate-detection) - Check for duplicates
+- [Followup](/api/icsr/followup) - Communication thread
+
+## Duplicate Detection
+
+### Check Duplicates for One Case
+
+```
+GET /api/v1/icsr/{icsr_id}/duplicates?days_window=60
+```
+
+**Parameters**:
+- `days_window` (integer, 1-365, default 60): Time window in days to search for duplicates based on event date
+
+**Response**:
+
+```json
+{
+  "status": "review",
+  "label": "Revisar",
+  "color": "warning",
+  "score": 0.65,
+  "best_id": 1200,
+  "matches": [
+    {
+      "id": 1200,
+      "score": 0.65,
+      "reasons": [
+        "Iniciales iguales",
+        "Fecha de nacimiento igual",
+        "Producto sospechoso igual",
+        "Narrativa similar (35%)"
+      ],
+      "fecha": "2024-01-14",
+      "producto": "Amoxicilina 500mg",
+      "iniciales": "JD",
+      "narrativa": "Paciente desarrolló rash eritematoso..."
+    }
+  ]
+}
+```
+
+**Score Interpretation**:
+- `>= 0.80`: Likely duplicate (status: "dup", color: "danger")
+- `0.45 - 0.79`: Review recommended (status: "review", color: "warning")
+- `< 0.45`: Likely unique (status: "unique", color: "success")
+
+### Set Duplicate Decision
+
+```
+PUT /api/v1/icsr/{icsr_id}/dup
+```
+
+**Request Body**:
+
+<ParamField body="final" type="string">
+  Manual decision: "unico" or "duplicado". Set to `null` to clear override.
+</ParamField>
+
+<ParamField body="picked_id" type="integer">
+  If `final: "duplicado"`, the ID of the master case. Required when marking as duplicate.
+</ParamField>
+
+**Example**:
+
+```json
+{
+  "final": "duplicado",
+  "picked_id": 1200
+}
+```
+
+**Response**:
+
+```json
+{
+  "ok": true,
+  "dup_override": "duplicado",
+  "dup_of_id": 1200
+}
+```
+
+### Bulk Duplicate Check
+
+```
+GET /api/v1/icsr/duplicates?ids=1234&ids=1235&ids=1236
+```
+
+or
+
+```
+GET /api/v1/icsr/duplicates?ids=1234,1235,1236
+```
+
+**Response**: Object keyed by case ID with duplicate detection results for each.

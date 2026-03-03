@@ -1,0 +1,376 @@
+---
+title: 'Ingestion Module'
+description: 'Multi-channel adverse event report ingestion system with email polling, web forms, WhatsApp integration, and OCR processing'
+icon: 'inbox'
+---
+
+## Overview
+
+The Ingestion module is VIGIA's multi-channel data intake system that captures adverse event reports from diverse sources including email (POP3/IMAP), web forms, WhatsApp, and document uploads with OCR capabilities.
+
+## Architecture
+
+The ingestion pipeline consists of three main components:
+
+- **Connectors**: Protocol-specific adapters for each data source
+- **Processors**: OCR and text extraction engines  
+- **Payload Builder**: Normalizes data into ICSR-compliant format
+
+<Note>
+The ingestion service automatically detects the source protocol and routes data through the appropriate processing pipeline.
+</Note>
+
+## Email Connectors
+
+### POP3 Connector
+
+The POP3 connector (`backend/app/services/email_pop.py:346`) implements stateful polling with UIDL tracking to prevent duplicate processing.
+
+<CodeGroup>
+```python Email Polling Configuration
+# Environment variables
+POP_HOST="mail.example.com"
+POP_PORT="995"
+POP_USER="farmacovigilancia@example.com"
+POP_PASS="secure_password"
+POP_SSL="true"
+POP_TIMEOUT_SECONDS="10"
+POP_CONNECT_RETRIES="3"
+
+# Size limits
+POP_MAX_BYTES="26214400"  # 25MB default
+
+# Processing behavior
+POP_TOP_PREVIEW_LINES="60"  # Fast header preview
+POP_FALLBACK_LAST="0"  # Don't re-download old emails
+```
+
+```python Fetch New Emails
+from app.services.email_pop import fetch_new
+
+# Fetch up to 10 new emails
+items = fetch_new(limit=10)
+
+for email in items:
+    print(f"From: {email['from']}")
+    print(f"Subject: {email['subject']}")
+    print(f"Attachments: {len(email['attachments'])}")
+    print(f"Text length: {len(email['text'])}")
+```
+</CodeGroup>
+
+**Key Features:**
+- Duplicate detection using Message-ID fingerprinting
+- Automatic retry with exponential backoff
+- Large attachment handling (images >15KB, PDFs)
+- HTML email parsing with fallback to plain text
+- DNS resolution and TCP probing for diagnostics
+
+<Warning>
+The POP3 connector increases `poplib._MAXLINE` to 1MB to handle long lines in email bodies. This is applied automatically on import.
+</Warning>
+
+### IMAP Connector
+
+The IMAP connector (`backend/app/services/email_imap.py:95`) provides folder-based filtering and optional mark-as-read functionality.
+
+```python IMAP Configuration
+IMAP_HOST="imap.gmail.com"
+IMAP_PORT="993"
+IMAP_USER="reports@example.com"
+IMAP_PASS="app_password"
+IMAP_FOLDER="INBOX"  # Or "Reports/Adverse Events"
+IMAP_MARK_SEEN="true"  # Mark as read after processing
+```
+
+**IMAP vs POP3:**
+
+| Feature | IMAP | POP3 |
+|---------|------|------|
+| Folder support | ✅ Yes | ❌ No |
+| Server-side search | ✅ UNSEEN flag | ❌ Client-side |
+| State management | 🔵 Server | 🟡 Local UIDL |
+| Performance | ⚡ Faster | 🐢 Requires full download |
+
+## Web Form Ingestion
+
+The web form router (`backend/app/routers/ingest.py:64`) exposes REST endpoints for direct ICSR creation.
+
+<Tabs>
+  <Tab title="Text Input">
+```python POST /api/v1/ingest/text/create
+{
+  "text": "Paciente de 45 años presentó urticaria tras tomar Ibuprofeno 400mg...",
+  "overrides": {
+    "gravedad": "Moderada",
+    "reportante_nombre": "Dr. García"
+  }
+}
+
+# Response: ICSRResponse with auto-generated fields
+```
+  </Tab>
+  <Tab title="File Upload">
+```python POST /api/v1/ingest/file/create
+# multipart/form-data
+file: <PDF/image with adverse event report>
+overrides: '{"producto_sospechoso": "Paracetamol 500mg"}'
+
+# Pipeline: OCR → NLP extraction → ICSR creation
+```
+  </Tab>
+</Tabs>
+
+## WhatsApp Integration
+
+WhatsApp connector configuration stored in tenant settings:
+
+```json Connector Status (GET /api/v1/ingest/connectors)
+{
+  "connectors": [
+    {
+      "key": "whatsapp",
+      "enabled": true,
+      "last_sync": "2025-03-03T22:00:00Z",
+      "details": {
+        "phone_number": "+51999999999",
+        "api_token": "EAAx..."
+      }
+    }
+  ]
+}
+```
+
+## OCR Processing
+
+OCR engine (`backend/app/services/ocr_service.py:130`) supports images and PDFs with multiple backends.
+
+<Steps>
+  <Step title="Image Processing">
+    Uses OpenCV for preprocessing:
+    - Grayscale conversion
+    - Otsu's binarization threshold
+    - Tesseract OCR (spa/eng language packs)
+  </Step>
+  <Step title="PDF Handling">
+    Two-tier approach:
+    1. **Primary**: pdf2image + Poppler (higher quality)
+    2. **Fallback**: PyMuPDF rasterization at 200 DPI
+  </Step>
+</Steps>
+
+```python OCR Configuration
+TESSERACT_CMD="/usr/bin/tesseract"  # Auto-detected
+POPPLER_PATH="/usr/bin"  # Required for pdf2image
+OCR_CONFIG="--oem 3 --psm 6"  # LSTM + assume uniform block
+```
+
+**Supported Formats:**
+- Images: PNG, JPG, JPEG, WebP, TIFF
+- Documents: PDF (multi-page)
+
+<Tip>
+For best OCR results, ensure source documents have at least 300 DPI resolution. The system automatically enhances lower quality images.
+</Tip>
+
+## Payload Construction
+
+The ingestion service (`backend/app/services/ingesta_service.py:198`) normalizes all inputs into standardized ICSR payloads.
+
+<AccordionGroup>
+  <Accordion title="Field Extraction Logic" icon="brain">
+    Two-stage extraction:
+    
+    1. **AI Extraction** (if enabled):
+       - Gemini API with structured output
+       - Entity recognition for patient data
+       - Automatic email extraction from sender
+    
+    2. **Rule-Based Fallback**:
+       - Regex patterns for Spanish medical terms
+       - Heuristic age/weight/date parsing
+       - Symptom keyword detection
+  </Accordion>
+  
+  <Accordion title="Data Normalization" icon="filter">
+    ```python Key Normalizations (backend/app/services/ingesta_service.py:49)
+    # Sex normalization
+    "M" → "Masculino"
+    "F gestante" → "Femenino gestante"
+    "F no gestante" → "Femenino no gestante"
+    
+    # Age validation
+    < 0 or > 120 → 30 (default)
+    
+    # Dose spacing fix
+    "10 0 mg" → "100 mg"
+    "5 ml" → "5 mL"
+    
+    # Date parsing
+    "10/08/2025" → "2025-08-10"
+    "este año" → current year inference
+    ```
+  </Accordion>
+  
+  <Accordion title="Full Narrative Storage" icon="file-text">
+    ```python STORE_FULL_NARRATIVE=true behavior
+    # Stores complete email body in descripcion_evento field
+    # Separate short summary in ea_evento (String 255)
+    # Enables AI-powered follow-up question generation
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Configuration
+
+### AI-Powered Extraction
+
+```bash Enable Gemini Extractor
+GEMINI_ENABLED="true"
+GEMINI_API_KEY="AIzaSy..."
+GEMINI_MODEL="gemini-1.5-pro"
+STORE_FULL_NARRATIVE="true"  # Store complete email text
+```
+
+<Warning>
+When `GEMINI_ENABLED=false`, the system falls back to rule-based NLP extraction with lower accuracy but no API costs.
+</Warning>
+
+### Connector Management
+
+```python Toggle Connector (POST /api/v1/ingest/connectors/gmail/toggle)
+{
+  "enabled": true
+}
+
+# Test connection (POST /api/v1/ingest/connectors/gmail/test)
+# Response:
+{
+  "ok": true,
+  "message": "Test ok for gmail"
+}
+```
+
+## Monitoring
+
+Ingestion items are tracked per source:
+
+```python List Recent Items (GET /api/v1/ingest/items?source=gmail&limit=10)
+{
+  "items": [
+    {
+      "id": "msg-12345",
+      "source": "gmail",
+      "subject": "Reporte RAM - Urticaria",
+      "status": "processed",
+      "created_at": "2025-03-03T10:30:00Z"
+    }
+  ]
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Email Setup" icon="envelope">
+    - Use dedicated inbox for adverse event reports
+    - Configure email filters to move reports to specific folder (IMAP)
+    - Enable app passwords instead of account passwords
+    - Set reasonable polling intervals (5-15 minutes)
+  </Card>
+  
+  <Card title="OCR Optimization" icon="file-image">
+    - Request 300+ DPI scanned documents from reporters
+    - Use PDF format when possible (preserves quality)
+    - Enable preprocessing for low-quality images
+    - Review OCR confidence scores in audit logs
+  </Card>
+  
+  <Card title="Data Quality" icon="check">
+    - Enable AI extraction for complex narratives
+    - Configure sender email whitelist for auto-approval
+    - Set required fields in overrides for form submissions
+    - Regularly review extraction accuracy metrics
+  </Card>
+  
+  <Card title="Performance" icon="gauge">
+    - Limit POP3 fetch to 10-20 emails per poll
+    - Use IMAP UNSEEN filter for faster queries
+    - Set MAX_BYTES to prevent memory issues
+    - Enable TOP preview to skip large emails
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="POP3 Connection Fails" icon="circle-xmark">
+    ```bash Diagnostic Steps
+    # 1. Check DNS resolution
+    nslookup mail.example.com
+    
+    # 2. Test TCP connectivity
+    telnet mail.example.com 995
+    
+    # 3. Verify SSL/TLS
+    openssl s_client -connect mail.example.com:995
+    
+    # 4. Review logs
+    grep "POP connect" /var/log/vigia/app.log
+    ```
+  </Accordion>
+  
+  <Accordion title="OCR Returns Empty Text" icon="file-slash">
+    Common causes:
+    - Missing Tesseract language packs (`apt install tesseract-ocr-spa`)
+    - Poppler not installed for PDF processing
+    - Image resolution too low (&lt;150 DPI)
+    - Handwritten text (not supported)
+    
+    Solution: Enable debug logging with `OCR_DEBUG=true`
+  </Accordion>
+  
+  <Accordion title="Duplicate Emails Processed" icon="copy">
+    POP3 UIDL storage may be cleared. Check:
+    ```python
+    # Location: storage/pop_uidls.json
+    # Location: storage/pop_seen_keys.json
+    
+    # Manually mark as seen:
+    UIDL_DB.write_text(json.dumps(["uid1", "uid2", ...]))
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## API Reference
+
+<ParamField path="/api/v1/ingest/text/preview" method="POST">
+  Preview ICSR payload from text without creating record
+</ParamField>
+
+<ParamField path="/api/v1/ingest/file/create" method="POST">
+  Upload file (PDF/image), run OCR, create ICSR
+</ParamField>
+
+<ParamField path="/api/v1/ingest/email/pull" method="GET">
+  Fetch unseen emails (does not process)
+</ParamField>
+
+<ParamField path="/api/v1/ingest/email/process" method="GET">
+  Fetch and extract fields from emails
+</ParamField>
+
+<ParamField path="/api/v1/ingest/connectors" method="GET">
+  List all configured ingestion connectors
+</ParamField>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="OCR/NLP Module" icon="brain" href="/modules/ocr-nlp">
+    Deep dive into AI extraction and translation
+  </Card>
+  <Card title="ICSR Management" icon="file-medical" href="/essentials/icsr">
+    Working with Individual Case Safety Reports
+  </Card>
+</CardGroup>

@@ -1,0 +1,378 @@
+---
+title: 'Translate Text'
+api: 'POST /api/v1/nlp/translate'
+description: 'Translate text between languages using Google Translate API via deep-translator'
+---
+
+## Overview
+
+This endpoint provides translation services powered by Google Translate through the deep-translator library. It supports automatic source language detection and translation to any target language, making it ideal for processing adverse event reports in multiple languages.
+
+## Use Cases
+
+- Translate adverse event reports from foreign languages to Spanish
+- Convert Spanish reports to English for international submissions
+- Batch translate product names and medical terms
+- Prepare multilingual documentation
+
+## Single Translation
+
+### Request
+
+<ParamField body="text" type="string" required>
+  The text to translate. Minimum length: 1 character.
+</ParamField>
+
+<ParamField body="target" type="string" default="es">
+  Target language code (ISO 639-1). Examples: `"es"` (Spanish), `"en"` (English), `"fr"` (French), `"de"` (German).
+</ParamField>
+
+<ParamField body="to" type="string">
+  Alias for `target`. Either parameter can be used.
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST https://api.vigia.com/api/v1/nlp/translate \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "The patient developed a severe allergic reaction",
+    "target": "es"
+  }'
+```
+
+```python
+import requests
+
+url = "https://api.vigia.com/api/v1/nlp/translate"
+headers = {
+    "Authorization": "Bearer YOUR_API_KEY",
+    "Content-Type": "application/json"
+}
+
+payload = {
+    "text": "The patient developed a severe allergic reaction",
+    "target": "es"
+}
+
+response = requests.post(url, json=payload, headers=headers)
+print(response.json())
+```
+
+### Response
+
+<ResponseField name="translated" type="string">
+  The translated text in the target language.
+</ResponseField>
+
+```json
+{
+  "translated": "El paciente desarrolló una reacción alérgica grave"
+}
+```
+
+## Batch Translation
+
+### Request
+
+Translate multiple texts in a single request for better performance.
+
+<ParamField body="texts" type="array" required>
+  Array of texts to translate. Maximum 200 items. Can contain strings, objects with `text`/`abstract`/`title` fields, or mixed types.
+</ParamField>
+
+<ParamField body="target" type="string" default="es">
+  Target language code for all translations.
+</ParamField>
+
+<ParamField body="to" type="string">
+  Alias for `target`.
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST https://api.vigia.com/api/v1/nlp/translate/batch \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texts": [
+      "Headache",
+      "Nausea",
+      "Dizziness",
+      "Fatigue"
+    ],
+    "target": "es"
+  }'
+```
+
+```python
+import requests
+
+url = "https://api.vigia.com/api/v1/nlp/translate/batch"
+headers = {
+    "Authorization": "Bearer YOUR_API_KEY",
+    "Content-Type": "application/json"
+}
+
+payload = {
+    "texts": [
+        "Headache",
+        "Nausea and vomiting",
+        "Severe dizziness",
+        "Chronic fatigue"
+    ],
+    "target": "es"
+}
+
+response = requests.post(url, json=payload, headers=headers)
+print(response.json())
+```
+
+### Response
+
+<ResponseField name="translated" type="array">
+  Array of translated strings in the same order as the input.
+</ResponseField>
+
+```json
+{
+  "translated": [
+    "Dolor de cabeza",
+    "Náuseas y vómitos",
+    "Mareos severos",
+    "Fatiga crónica"
+  ]
+}
+```
+
+## Batch Translation with Objects
+
+The batch endpoint intelligently handles objects by extracting text from specific fields:
+
+```python
+payload = {
+    "texts": [
+        {"text": "Severe headache"},
+        {"abstract": "Patient reported dizziness"},
+        {"title": "Adverse Event Report"},
+        "Plain text string"
+    ],
+    "target": "es"
+}
+```
+
+The service extracts text in this priority order:
+1. `text` field
+2. `abstract` field  
+3. `title` field
+4. String representation of the object
+
+## GET Endpoints (Quick Testing)
+
+Convenience endpoints for browser-based testing:
+
+### Single Translation (GET)
+
+```bash
+GET /api/v1/nlp/translate?text=Hello%20world&target=es
+```
+
+### Batch Translation (GET)
+
+```bash
+GET /api/v1/nlp/translate/batch?texts=Hello&texts=World&target=es
+```
+
+## Supported Languages
+
+The service supports 100+ languages via Google Translate. Common language codes:
+
+| Language | Code |
+|----------|------|
+| Spanish | `es` |
+| English | `en` |
+| French | `fr` |
+| German | `de` |
+| Italian | `it` |
+| Portuguese | `pt` |
+| Chinese | `zh-CN` |
+| Japanese | `ja` |
+| Korean | `ko` |
+| Russian | `ru` |
+| Arabic | `ar` |
+
+View complete list: [Google Translate Languages](https://cloud.google.com/translate/docs/languages)
+
+## Automatic Language Detection
+
+The service uses `source="auto"` to automatically detect the source language, so you don't need to specify it. This is particularly useful for:
+
+- Processing reports from unknown sources
+- Handling mixed-language content
+- Supporting international users
+
+## Error Handling
+
+### Rate Limiting
+
+Google Translate may impose rate limits. When limits are reached:
+- Original text is returned unchanged
+- Error is logged but request succeeds
+- No HTTP error is thrown
+
+### CAPTCHA Protection
+
+If Google detects automated requests:
+- Translation falls back to original text
+- Warning logged: `"Error en GoogleTranslator: ..."`
+- Consider using official Google Cloud Translation API for production
+
+### Invalid Input
+
+<ResponseField name="detail" type="string">
+  Error message for invalid requests
+</ResponseField>
+
+```json
+{
+  "detail": "Demasiados ítems (máx. 200)"
+}
+```
+
+**Status 413**: More than 200 items in batch request
+
+**Status 422**: Invalid input format (missing required fields, wrong types)
+
+## Data Processing
+
+Batch endpoint normalizes various input types:
+
+### Null Handling
+`null` values are filtered out automatically
+
+### String Normalization
+- Whitespace is trimmed
+- Empty strings are removed
+- Lists/tuples are joined with spaces
+
+### Object Extraction
+Objects are searched for text fields in priority order:
+1. `text`
+2. `abstract`  
+3. `title`
+4. Fallback to `str(object)`
+
+## Health Check
+
+Verify translation service availability:
+
+```bash
+GET /api/v1/nlp/translate/health
+```
+
+```json
+{
+  "ok": true,
+  "engine": "deep-translator.GoogleTranslator",
+  "available": true
+}
+```
+
+<ResponseField name="ok" type="boolean">
+  Service status
+</ResponseField>
+
+<ResponseField name="engine" type="string">
+  Translation engine in use
+</ResponseField>
+
+<ResponseField name="available" type="boolean">
+  Whether deep-translator library is properly installed
+</ResponseField>
+
+## Best Practices
+
+1. **Batch Requests**: Use batch endpoint for multiple translations to reduce API calls
+2. **Handle Fallbacks**: Check if translated text equals input (indicates translation failure)
+3. **Language Codes**: Use ISO 639-1 codes (2 letters) for best compatibility
+4. **Input Validation**: Trim whitespace and validate text before sending
+5. **Production Use**: Consider Google Cloud Translation API for guaranteed uptime
+
+## Performance
+
+- **Single translation**: ~500ms - 2s (network dependent)
+- **Batch translation**: ~100-200ms per text (processed sequentially)
+- **Network issues**: Fallback to original text (no timeout errors)
+
+## Limitations
+
+### Deep-Translator Library
+
+- Uses unofficial Google Translate API
+- Subject to rate limiting and CAPTCHA
+- No SLA or uptime guarantee
+- Not recommended for high-volume production use
+
+### Batch Size
+
+- Maximum 200 items per request
+- No character limit per item, but very long texts may timeout
+- Sequential processing (not parallelized)
+
+### Reliability
+
+For production environments, consider:
+- **Google Cloud Translation API**: Official API with SLA
+- **AWS Translate**: Amazon's translation service
+- **Azure Translator**: Microsoft's translation service
+
+## Integration Example
+
+Complete workflow for multilingual adverse event processing:
+
+```python
+import requests
+
+# Step 1: OCR a document
+ocr_response = requests.post(
+    "https://api.vigia.com/api/v1/ocr/preview",
+    files={"file": open("report.pdf", "rb")},
+    headers={"Authorization": "Bearer YOUR_API_KEY"}
+)
+
+text = ocr_response.json()["text"]
+
+# Step 2: Translate to Spanish if needed
+translate_response = requests.post(
+    "https://api.vigia.com/api/v1/nlp/translate",
+    json={"text": text, "target": "es"},
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    }
+)
+
+translated_text = translate_response.json()["translated"]
+
+# Step 3: Extract structured data
+extract_response = requests.post(
+    "https://api.vigia.com/api/v1/nlp/extract",
+    json={"text": translated_text},
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    }
+)
+
+structured_data = extract_response.json()
+print(structured_data)
+```
+
+## Next Steps
+
+- Use [OCR Processing](/api/ocr/process-document) to extract text from documents first
+- Use [Extract Data](/api/nlp/extract-data) to parse structured fields from translated text
+- Review translation quality for medical terminology

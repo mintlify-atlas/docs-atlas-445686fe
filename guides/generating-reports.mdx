@@ -1,0 +1,739 @@
+---
+title: Generating Reports
+description: IPS/PSUR generation, DIGEMID exports, and regulatory document workflows
+---
+
+VIGIA generates regulatory-compliant reports for health authorities and internal safety monitoring. This guide covers IPS/PSUR (Periodic Safety Update Reports), DIGEMID exports, and custom document generation.
+
+## Overview
+
+VIGIA supports:
+
+- **IPS/PSUR Reports**: ICH E2C(R2) compliant periodic safety reports
+- **DIGEMID Exports**: Peru regulatory authority format (Modelo B, RAM forms)
+- **Signal Detection**: Aggregate analysis and trend identification
+- **Document Templates**: Customizable DOCX/PDF generation
+- **Calendar Management**: Automated report scheduling by product
+
+## IPS/PSUR Report Generation
+
+### Overview
+
+**IPS (Informe Periódico de Seguridad)** / **PSUR (Periodic Safety Update Report)** summarizes the safety profile of a product over a defined period.
+
+**Structure** (ICH E2C R2):
+1. Executive Summary
+2. Product Information
+3. Data Sources
+4. Cumulative Summary of Safety Data
+5. Benefit-Risk Analysis
+6. Signal Evaluation
+7. Literature Search Results
+8. Conclusion
+
+### Workflow
+
+<Steps>
+  <Step title="Access IPS Calendar">
+    Navigate to **Reports** > **IPS Calendar**
+    
+    **URL**: `/calendario-ips`
+    
+    View scheduled IPS reports by product:
+    
+    | Product | Period | Due Date | Status |
+    |---------|--------|----------|--------|
+    | Paracetamol 500mg | Q1 2024 (Jan-Mar) | 2024-04-15 | Draft |
+    | Ibuprofeno 400mg | 6M 2023-2 (Jul-Dec) | 2024-01-31 | Submitted |
+    | Omeprazol 20mg | Annual 2023 | 2024-02-28 | In Progress |
+  </Step>
+  
+  <Step title="Create New IPS">
+    Click **+ New IPS** > Select product and period:
+    
+    ```
+    Product: [Paracetamol 500mg ▼]
+    Period Type: [Quarterly ▼]
+    Period: Q2 2024 (Apr-Jun)
+    Data Lock Point: [2024-06-30 ▼]
+    Submission Deadline: [2024-07-31 ▼]
+    ```
+    
+    **API**:
+    ```python
+    POST /api/v1/ips
+    Body: {
+      "producto_id": 123,
+      "periodo_tipo": "quarterly",
+      "periodo_inicio": "2024-04-01",
+      "periodo_fin": "2024-06-30",
+      "fecha_corte": "2024-06-30",
+      "fecha_limite": "2024-07-31"
+    }
+    ```
+  </Step>
+  
+  <Step title="Configure Data Sources">
+    Select which data sources to include:
+    
+    <Check>**Internal Cases** (VIGIA database)</Check>
+    <Check>**Literature** (PubMed, LILACS, SciELO)</Check>
+    <Check>**Regulatory Databases** (DIGEMID, FDA FAERS, EMA EudraVigilance)</Check>
+    <Check>**Clinical Trials** (if applicable)</Check>
+    
+    Configure search parameters:
+    ```json
+    {
+      "sources": {
+        "vigia": {"enabled": true, "product_id": 123},
+        "pubmed": {
+          "enabled": true,
+          "query": "paracetamol AND (adverse OR toxicity)",
+          "date_range": "2024-04-01 to 2024-06-30"
+        },
+        "digemid": {"enabled": true, "product_name": "Paracetamol"}
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Run Data Collection">
+    Click **Collect Data**. The system:
+    
+    1. **Internal Cases**:
+       ```python
+       GET /api/v1/icsr?producto_id=123&
+           fecha_recepcion_min=2024-04-01&
+           fecha_recepcion_max=2024-06-30
+       ```
+       
+       Groups cases by:
+       - Severity (grave/no grave)
+       - Outcome (recovered, ongoing, death)
+       - MedDRA SOC (System Organ Class)
+    
+    2. **Literature Search**:
+       ```python
+       # backend/app/services/biblio_sources.py
+       
+       search_pubmed(query, date_range) → [
+         {"title": "...", "pmid": 12345, "abstract": "..."},
+         ...
+       ]
+       
+       search_lilacs(query, date_range) → [...]
+       ```
+       
+       AI screening for safety signals:
+       ```python
+       for article in results:
+           article["safety_hit"] = contains_safety_signal(article.abstract)
+       ```
+    
+    3. **Regulatory Database Queries**:
+       - DIGEMID: `search_digemid_nordic(product, period)`
+       - FDA FAERS: `search_fda(product, period)`
+       - EMA: `search_ema(product, period)`
+    
+    Results displayed in **Data Summary** panel:
+    ```
+    ✓ Internal Cases: 45 (23 grave, 22 no grave)
+    ✓ PubMed: 128 articles (12 safety-relevant)
+    ✓ LILACS: 34 articles (3 safety-relevant)
+    ✓ DIGEMID: 8 cases
+    ✓ FDA FAERS: 234 cases
+    ```
+  </Step>
+  
+  <Step title="Aggregate Analysis">
+    Navigate to **Analysis** tab. The system auto-calculates:
+    
+    **Cumulative Exposure**:
+    ```
+    Period: 12,450 patients
+    Cumulative (since launch): 3,245,890 patients
+    ```
+    
+    **Incidence Rates**:
+    ```
+    Hepatotoxicity: 0.18 per 10,000 patient-years
+    Rash: 1.24 per 10,000 patient-years
+    Anaphylaxis: 0.02 per 10,000 patient-years
+    ```
+    
+    **Case Distribution by SOC**:
+    | SOC | Count | % |
+    |-----|-------|----|
+    | Gastrointestinal disorders | 18 | 40% |
+    | Skin and subcutaneous tissue disorders | 12 | 27% |
+    | Hepatobiliary disorders | 8 | 18% |
+    | General disorders | 7 | 15% |
+    
+    **Signal Detection**:
+    - Disproportionality analysis (PRR, ROR)
+    - Emerging patterns
+    - Serious unlisted events
+  </Step>
+  
+  <Step title="Generate Document">
+    Click **Generate Report** > Select format:
+    
+    ```
+    Format: [DOCX ▼]  (DOCX or PDF)
+    Template: [IPS Standard Peru ▼]
+    Language: [Spanish ▼]
+    ```
+    
+    **API**:
+    ```python
+    POST /api/v1/reports/pbrer
+    Body: {
+      "ips_id": 456,
+      "formato": "docx",
+      "template": "standard_peru",
+      "include_fichas": true
+    }
+    
+    Response: Binary (DOCX file)
+    ```
+    
+    The system:
+    1. Loads template: `app/templates/docs/IPS_REPORTE GENERAL.docx`
+    2. Builds context:
+       ```python
+       # backend/app/routers/reports.py
+       
+       context = {
+         "meta": {"ips_id": 456, "version": "1.0", ...},
+         "producto": {"nombre": "Paracetamol", ...},
+         "fuentes": [
+           {"source": "PubMed", "detected_total": 128, "items": [...]},
+           ...
+         ],
+         "kpis": {
+           "total_casos": 45,
+           "casos_graves": 23,
+           "casos_muerte": 0,
+           "incidencia_hepatotoxicidad": 0.18
+         },
+         "firmas": {"elaborado_por": "Q.F. Juan Pérez", ...}
+       }
+       ```
+    3. Renders with Jinja2:
+       ```python
+       from docxtpl import DocxTemplate
+       
+       doc = DocxTemplate(template_path)
+       doc.render(context)
+       doc.save(output_path)
+       ```
+    4. Optional: Convert to PDF via LibreOffice:
+       ```bash
+       soffice --headless --convert-to pdf:writer_pdf_Export \
+         --outdir /tmp output.docx
+       ```
+  </Step>
+  
+  <Step title="Review and Edit">
+    Download the generated document. Review and edit:
+    
+    **Sections to customize**:
+    - Executive summary (auto-generated is generic)
+    - Benefit-risk conclusion
+    - Signal interpretation
+    - Recommendations
+    
+    **Automated sections** (usually accurate):
+    - Case counts and tables
+    - Literature references
+    - MedDRA coding summaries
+  </Step>
+  
+  <Step title="Approve and Submit">
+    Upload final version:
+    
+    ```
+    Upload Final: [Select File]
+    Approved By: [Q.F. María García ▼]
+    Submission Date: [2024-07-25 ▼]
+    ```
+    
+    **API**:
+    ```python
+    PUT /api/v1/ips/{ips_id}/submit
+    Body: {
+      "version_final_url": "storage/ips/ips_456_final.pdf",
+      "aprobado_por_id": 789,
+      "fecha_envio": "2024-07-25"
+    }
+    ```
+    
+    The system:
+    - Updates status to "Submitted"
+    - Archives document
+    - Schedules next period automatically
+    - Sends notification to regulatory contact
+  </Step>
+</Steps>
+
+## DIGEMID Exports
+
+### Modelo B (Individual Case Report)
+
+DIGEMID (Peru's regulatory authority) requires specific formats for case submissions.
+
+<Steps>
+  <Step title="Select Cases for Export">
+    Go to **Cases** > **Export** > Select cases:
+    
+    ```
+    Filters:
+    ☑ Graves only
+    ☑ Periodo: 2024-Q1
+    ☑ Estado: Completado
+    ☑ Not previously exported
+    
+    Selected: 12 cases
+    ```
+  </Step>
+  
+  <Step title="Choose Export Format">
+    ```
+    Format: [DIGEMID Modelo B ▼]
+    
+    Options:
+    - DIGEMID Modelo B (Individual PDF per case)
+    - DIGEMID Modelo B (Batch Excel)
+    - CIOMS Form (international standard)
+    ```
+  </Step>
+  
+  <Step title="Generate Export">
+    Click **Generate**. The system:
+    
+    ```python
+    POST /api/v1/icsr/export/{icsr_id}/digemid
+    Query: ?format=pdf&include_firma=true
+    
+    # backend/app/routers/icsr_export.py
+    
+    def generate_digemid_official_pdf(icsr, user):
+        # Build context
+        ctx = build_ctx_for_digemid(icsr)
+        
+        # Load template
+        tpl = DocxTemplate("templates/DIGEMID_RAM_MODELO_B.docx")
+        
+        # Add firma (signature)
+        firma_ctx = _build_firma_ctx(db, user)
+        ctx.update(firma_ctx)
+        
+        # Render
+        tpl.render(ctx)
+        
+        # Convert to PDF
+        pdf_bytes = _to_pdf_with_libreoffice(tpl.get_docx())
+        
+        return pdf_bytes
+    ```
+    
+    **Context fields**:
+    ```python
+    ctx = {
+      # Identificación
+      "codigo_interno": "LAB-2024-001",
+      "fecha_recepcion": "01/03/2024",
+      
+      # Paciente
+      "paciente_iniciales": "J.P.",
+      "paciente_edad": 45,
+      "paciente_sexo": "M",
+      "paciente_peso": 75,
+      
+      # Producto
+      "producto_nombre": "Paracetamol 500mg",
+      "producto_fabricante": "Lab XYZ",
+      "producto_lote": "ABC123",
+      "producto_registro": "EE-12345",
+      
+      # Evento
+      "evento_descripcion": "...",
+      "evento_fecha_inicio": "28/02/2024",
+      "evento_gravedad": "Grave",
+      "evento_criterios": ["Hospitalización"],
+      "evento_desenlace": "Recuperado",
+      
+      # Causalidad
+      "causalidad": "Probable",
+      
+      # Firma
+      "firma_nombre": "Q.F. Juan Pérez",
+      "firma_cargo": "Responsable de Farmacovigilancia",
+      "firma_fecha": "25/03/2024",
+      "firma_imagen_path": "storage/firmas/qf_jperez.png"
+    }
+    ```
+  </Step>
+  
+  <Step title="Download and Submit">
+    Download generated files:
+    
+    ```
+    ✓ ICSR_123_DIGEMID_Modelo_B.pdf (245 KB)
+    ✓ ICSR_124_DIGEMID_Modelo_B.pdf (198 KB)
+    ...
+    ✓ BATCH_SUMMARY.xlsx (12 cases)
+    ```
+    
+    Submit to DIGEMID:
+    - Via online portal: https://www.digemid.minsa.gob.pe/
+    - Via email: farmacovigilancia@digemid.minsa.gob.pe
+    - In person (for serious cases)
+  </Step>
+  
+  <Step title="Record Submission">
+    Mark cases as exported:
+    
+    ```python
+    PATCH /api/v1/icsr/{icsr_id}
+    Body: {
+      "exportado_digemid": true,
+      "fecha_export_digemid": "2024-03-25",
+      "digemid_folio": "2024-0012345"  // DIGEMID tracking number
+    }
+    ```
+  </Step>
+</Steps>
+
+### Reporting Timelines (DIGEMID)
+
+| Event Type | Timeline | Submission Method |
+|------------|----------|-------------------|
+| **Fatal** | 15 calendar days | Electronic + physical |
+| **Serious (non-fatal)** | 30 calendar days | Electronic |
+| **Non-serious** | Quarterly reports | Electronic batch |
+| **Unexpected serious** | 15 calendar days | Electronic + physical |
+
+## Custom Document Templates
+
+### Creating Templates
+
+VIGIA uses **DocxTemplate** (python-docx-template) for DOCX generation.
+
+<Steps>
+  <Step title="Prepare Base Document">
+    Create a DOCX file in Microsoft Word with:
+    - Desired layout and styles
+    - Placeholder tables (if needed)
+    - Images/logos (static content)
+  </Step>
+  
+  <Step title="Add Jinja2 Placeholders">
+    Insert dynamic fields using Jinja2 syntax:
+    
+    **Simple variables**:
+    ```
+    Producto: {{ producto_nombre }}
+    Período: {{ periodo_inicio }} al {{ periodo_fin }}
+    Total Casos: {{ total_casos }}
+    ```
+    
+    **Conditionals**:
+    ```
+    {% if casos_graves > 0 %}
+    ⚠️ Se detectaron {{ casos_graves }} casos graves.
+    {% else %}
+    ✓ No se reportaron casos graves en este período.
+    {% endif %}
+    ```
+    
+    **Loops**:
+    ```
+    {% for caso in casos %}
+    - Caso #{{ caso.id }}: {{ caso.evento }} ({{ caso.gravedad }})
+    {% endfor %}
+    ```
+    
+    **Tables** (use subdoc):
+    ```
+    {{ cuadro_resumen_tbl }}  {# Generated programmatically #}
+    ```
+  </Step>
+  
+  <Step title="Upload Template">
+    Save template to:
+    ```
+    backend/app/templates/docs/IPS_Custom_Template.docx
+    ```
+    
+    Register in database:
+    ```python
+    POST /api/v1/admin/templates
+    Body: {
+      "nombre": "IPS Custom",
+      "tipo": "ips",
+      "ruta": "docs/IPS_Custom_Template.docx",
+      "descripcion": "Custom template for Product X"
+    }
+    ```
+  </Step>
+  
+  <Step title="Test Rendering">
+    Generate a test report:
+    
+    ```python
+    POST /api/v1/reports/test-render
+    Body: {
+      "template_id": 5,
+      "ips_id": 123
+    }
+    
+    Response: Binary (DOCX)
+    ```
+    
+    Review output for:
+    - All variables populated
+    - Formatting preserved
+    - Tables/loops correct
+    - Images loaded
+  </Step>
+</Steps>
+
+### Template Variables Reference
+
+**IPS/PSUR Templates**:
+
+```python
+{
+  # Meta
+  "ips_id": str,
+  "version": str,
+  "estado": str,
+  "periodo_inicio": date,
+  "periodo_fin": date,
+  "fecha_corte": date,
+  "fecha_busqueda": date,
+  "emitido_en": str,
+  
+  # Product
+  "producto_nombre": str,
+  "producto_principio": str,
+  "producto_presentacion": str,
+  "producto_via": str,
+  "producto_registro": str,
+  "producto_fabricante": str,
+  
+  # Sources
+  "fuentes": [
+    {
+      "source": str,
+      "detected_total": int,
+      "items": [
+        {"title": str, "journal": str, "year": int, "url": str}
+      ]
+    }
+  ],
+  
+  # KPIs
+  "total_casos": int,
+  "casos_graves": int,
+  "casos_muerte": int,
+  "incidencia_<event>": float,
+  
+  # Signatures
+  "elaborado_por": str,
+  "revisado_por": str,
+  "aprobado_por": str,
+  "cargo_elabora": str,
+  "cargo_revisa": str,
+  "cargo_aprueba": str,
+  "empresa_nombre": str,
+  "empresa_direccion": str
+}
+```
+
+**DIGEMID Templates**:
+
+```python
+{
+  # Case identification
+  "codigo_interno": str,
+  "fecha_recepcion": str,
+  "numero_notificacion": str,
+  
+  # Patient
+  "paciente_iniciales": str,
+  "paciente_edad": int,
+  "paciente_sexo": str,
+  "paciente_peso": float,
+  
+  # Product
+  "producto_nombre": str,
+  "producto_principio": str,
+  "producto_fabricante": str,
+  "producto_lote": str,
+  "producto_registro": str,
+  "producto_dosis": str,
+  "producto_via": str,
+  
+  # Event
+  "evento_descripcion": str,
+  "evento_fecha_inicio": str,
+  "evento_fecha_fin": str,
+  "evento_gravedad": str,
+  "evento_criterios": list[str],
+  "evento_desenlace": str,
+  
+  # Causality
+  "causalidad": str,
+  
+  # Signature
+  "firma_nombre": str,
+  "firma_cargo": str,
+  "firma_fecha": str,
+  "firma_imagen_path": str  # Path to signature PNG
+}
+```
+
+## Report Calendar Management
+
+### Automated Scheduling
+
+VIGIA automatically schedules IPS reports based on product registration:
+
+<Steps>
+  <Step title="Configure Product Schedule">
+    In **Products** > **{Product}** > **IPS Schedule**:
+    
+    ```
+    Reporting Frequency: [Quarterly ▼]
+    
+    Options:
+    - Quarterly (every 3 months)
+    - Semi-annual (every 6 months)
+    - Annual (yearly)
+    - Custom (define periods manually)
+    
+    Start Date: [2024-01-01 ▼]  (product launch or IBD)
+    Submission Deadline: [+45 days after period end ▼]
+    ```
+  </Step>
+  
+  <Step title="Auto-generation">
+    The system creates calendar entries:
+    
+    ```python
+    # backend/app/services/ips_calendario.py
+    
+    def generate_ips_calendar(product, frequency, start_date):
+        periods = calculate_periods(frequency, start_date)
+        
+        for period in periods:
+            IPS(
+              producto_id=product.id,
+              periodo_tipo=frequency,
+              periodo_inicio=period.start,
+              periodo_fin=period.end,
+              fecha_limite=period.end + timedelta(days=45),
+              estado="Pendiente"
+            )
+    ```
+  </Step>
+  
+  <Step title="Email Reminders">
+    VIGIA sends reminders:
+    - **30 days before**: "IPS Q2 2024 due in 30 days"
+    - **7 days before**: "IPS Q2 2024 due in 7 days (urgent)"
+    - **On due date**: "IPS Q2 2024 submission deadline is today"
+    - **Overdue**: "IPS Q2 2024 is overdue by 5 days"
+  </Step>
+</Steps>
+
+## Batch Operations
+
+### Exporting Multiple Cases
+
+<Steps>
+  <Step title="Select Cases">
+    In **Cases** list, use checkboxes to select multiple cases
+    
+    **Bulk selection**:
+    ```
+    ☑ Select all on page (10)
+    ☑ Select all matching filters (45)
+    ```
+  </Step>
+  
+  <Step title="Choose Batch Action">
+    ```
+    Actions: [Export ▼]
+    
+    Options:
+    - Export to Excel
+    - Export to DIGEMID (batch)
+    - Generate PDFs (zip)
+    - Update status
+    ```
+  </Step>
+  
+  <Step title="Configure Export">
+    For Excel export:
+    ```
+    Columns: [All ▼]
+    Format: [XLSX ▼]
+    Include: ☑ MedDRA codes ☑ Causality ☑ Followup notes
+    ```
+    
+    **API**:
+    ```python
+    POST /api/v1/icsr/export/batch
+    Body: {
+      "icsr_ids": [123, 124, 125, ...],
+      "format": "xlsx",
+      "columns": ["id", "fecha_recepcion", "producto", ...]
+    }
+    ```
+  </Step>
+  
+  <Step title="Download Results">
+    ```
+    ✓ BATCH_EXPORT_2024-03-25.xlsx (45 cases, 2.4 MB)
+    ```
+    
+    Excel includes:
+    - All selected cases (one row per case)
+    - Configured columns
+    - MedDRA codes
+    - Causality assessments
+    - Export timestamp
+  </Step>
+</Steps>
+
+## API Reference
+
+```python
+# IPS/PSUR
+POST /api/v1/ips
+GET /api/v1/ips/{ips_id}
+PUT /api/v1/ips/{ips_id}/submit
+POST /api/v1/reports/pbrer
+
+# DIGEMID Export
+POST /api/v1/icsr/export/{icsr_id}/digemid?format=pdf
+GET /api/v1/icsr/export/{icsr_id}/modelo-b
+
+# Batch Operations
+POST /api/v1/icsr/export/batch
+Body: {"icsr_ids": [...], "format": "xlsx"}
+
+# Calendar
+GET /api/v1/ips/calendario?year=2024
+POST /api/v1/ips/calendario/generate
+
+# Templates
+GET /api/v1/admin/templates
+POST /api/v1/admin/templates
+POST /api/v1/reports/test-render
+```
+
+See **API Reference** for complete endpoint documentation.

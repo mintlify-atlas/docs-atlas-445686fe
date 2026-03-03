@@ -1,0 +1,560 @@
+---
+title: 'Manage Adverse Events'
+api: 'PUT /api/v1/icsr/{icsr_id}/eventos'
+description: 'Add, update, and manage adverse events for ICSR cases with MedDRA coding support'
+---
+
+## Endpoints
+
+### List Events for a Case
+
+```
+GET /api/v1/icsr/{icsr_id}/eventos
+```
+
+Returns all adverse events associated with a specific ICSR case.
+
+**Authentication**: Requires permission `icsr:read`
+
+### Replace All Events
+
+```
+PUT /api/v1/icsr/{icsr_id}/eventos
+```
+
+Replaces all adverse events for a case. This is the primary endpoint for updating events.
+
+**Authentication**: Requires permission `icsr:update`
+
+### Update Single Event
+
+```
+PUT /api/v1/icsr/{icsr_id}/eventos/{evento_id}
+```
+
+Updates a single adverse event (e.g., to change severity, causality, or outcome).
+
+**Authentication**: Requires permission `icsr:update`
+
+### Update MedDRA Coding Only
+
+```
+PUT /api/v1/icsr/{icsr_id}/meddra
+```
+
+Alias endpoint specifically for updating MedDRA coding. Behaves identically to the main eventos endpoint.
+
+**Authentication**: Requires permission `icsr:update`
+
+### Bulk Event Retrieval
+
+```
+GET /api/v1/icsr/eventos?ids=1&ids=2&ids=3
+GET /api/v1/icsr/_bulk/eventos?ids=1,2,3
+```
+
+Retrieve events for multiple ICSR cases in a single request.
+
+**Authentication**: Requires permission `icsr:read`
+
+## Path Parameters
+
+<ParamField path="icsr_id" type="integer" required>
+  The unique identifier of the ICSR case
+</ParamField>
+
+<ParamField path="evento_id" type="integer" required>
+  The unique identifier of the specific adverse event (for single event updates)
+</ParamField>
+
+## Request Body (Replace All Events)
+
+<ParamField body="eventos" type="array" required>
+  Array of event objects. Sending an empty array will delete all events.
+  
+  <Expandable title="Event Object Schema">
+    <ParamField body="texto" type="string" required>
+      Event description/text (minimum 1 character)
+    </ParamField>
+    
+    <ParamField body="tipo_notificacion" type="string">
+      Notification type (e.g., "Inicial", "Seguimiento")
+    </ParamField>
+    
+    <ParamField body="fecha_inicio" type="string" format="date">
+      Event start date (ISO format: YYYY-MM-DD)
+    </ParamField>
+    
+    <ParamField body="fecha_fin" type="string" format="date">
+      Event end date (ISO format: YYYY-MM-DD)
+    </ParamField>
+    
+    <ParamField body="gravedad" type="string">
+      Event severity. Common values:
+      - "Grave"
+      - "No grave"
+      - "Potencialmente grave"
+    </ParamField>
+    
+    <ParamField body="causalidad" type="string">
+      Causality assessment. Common values:
+      - "Definitiva" - Certain/definite relationship
+      - "Probable" - Probable relationship
+      - "Posible" - Possible relationship
+      - "Improbable" - Unlikely relationship
+      - "Condicional" - Conditional
+      - "No clasificable" - Unassessable
+    </ParamField>
+    
+    <ParamField body="desenlace" type="string">
+      Event outcome. Common values:
+      - "Recuperado" - Recovered
+      - "En recuperación" - Recovering
+      - "Recuperado con secuelas" - Recovered with sequelae
+      - "No recuperado" - Not recovered
+      - "Muerte" - Death
+      - "Desconocido" - Unknown
+    </ParamField>
+    
+    <ParamField body="solo_ram_grave" type="string">
+      Whether serious only due to adverse reaction. Values: "Si", "No", or null
+    </ParamField>
+    
+    <ParamField body="texto_correo" type="string">
+      Extended text from email or correspondence
+    </ParamField>
+    
+    <ParamField body="doc_fuente_url" type="string">
+      URL to source document or attachment
+    </ParamField>
+    
+    <ParamField body="meddra_llt_code" type="string">
+      MedDRA Lowest Level Term (LLT) code (e.g., "10037868")
+    </ParamField>
+    
+    <ParamField body="meddra_llt_term" type="string">
+      MedDRA LLT term text (e.g., "Rash eritematoso")
+    </ParamField>
+    
+    <ParamField body="meddra_pt_code" type="string">
+      MedDRA Preferred Term (PT) code (e.g., "10037844")
+    </ParamField>
+    
+    <ParamField body="meddra_pt_term" type="string">
+      MedDRA PT term text (e.g., "Rash")
+    </ParamField>
+    
+    <ParamField body="meddra_pt_manual" type="string">
+      Manually entered PT term if auto-coding is not used
+    </ParamField>
+    
+    <ParamField body="is_from_narrative" type="boolean" default="true">
+      Whether the event was extracted from the narrative description (vs. manually added)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Request Body (Update Single Event)
+
+<ParamField body="gravedad" type="string">
+  Update event severity
+</ParamField>
+
+<ParamField body="causalidad" type="string">
+  Update causality assessment
+</ParamField>
+
+<ParamField body="desenlace" type="string">
+  Update event outcome
+</ParamField>
+
+<ParamField body="solo_ram_grave" type="string">
+  Update serious-only-due-to-AE flag
+</ParamField>
+
+<ParamField body="texto_correo" type="string">
+  Update extended text
+</ParamField>
+
+<ParamField body="doc_fuente_url" type="string">
+  Update source document URL
+</ParamField>
+
+<ParamField body="meddra_llt_code" type="string">
+  Update LLT code
+</ParamField>
+
+<ParamField body="meddra_llt_term" type="string">
+  Update LLT term
+</ParamField>
+
+<ParamField body="meddra_pt_code" type="string">
+  Update PT code
+</ParamField>
+
+<ParamField body="meddra_pt_term" type="string">
+  Update PT term
+</ParamField>
+
+<ParamField body="meddra_pt_manual" type="string">
+  Update manual PT term
+</ParamField>
+
+Only include fields you want to update. Fields not included will retain their current values.
+
+## Response
+
+Returns an array of event objects:
+
+<ResponseField name="id" type="integer">
+  Unique event identifier
+</ResponseField>
+
+<ResponseField name="icsr_id" type="integer">
+  Parent ICSR case ID
+</ResponseField>
+
+<ResponseField name="texto" type="string">
+  Event description
+</ResponseField>
+
+<ResponseField name="tipo_notificacion" type="string">
+  Notification type
+</ResponseField>
+
+<ResponseField name="fecha_inicio" type="string" format="date">
+  Event start date
+</ResponseField>
+
+<ResponseField name="fecha_fin" type="string" format="date">
+  Event end date
+</ResponseField>
+
+<ResponseField name="gravedad" type="string">
+  Event severity
+</ResponseField>
+
+<ResponseField name="causalidad" type="string">
+  Causality assessment
+</ResponseField>
+
+<ResponseField name="desenlace" type="string">
+  Event outcome
+</ResponseField>
+
+<ResponseField name="solo_ram_grave" type="string">
+  Serious-only-due-to-AE indicator
+</ResponseField>
+
+<ResponseField name="texto_correo" type="string">
+  Extended text from correspondence
+</ResponseField>
+
+<ResponseField name="doc_fuente_url" type="string">
+  Source document URL
+</ResponseField>
+
+<ResponseField name="meddra_llt_code" type="string">
+  MedDRA LLT code
+</ResponseField>
+
+<ResponseField name="meddra_llt_term" type="string">
+  MedDRA LLT term
+</ResponseField>
+
+<ResponseField name="meddra_pt_code" type="string">
+  MedDRA PT code
+</ResponseField>
+
+<ResponseField name="meddra_pt_term" type="string">
+  MedDRA PT term
+</ResponseField>
+
+<ResponseField name="meddra_pt_manual" type="string">
+  Manual PT term
+</ResponseField>
+
+<ResponseField name="is_from_narrative" type="boolean">
+  Whether extracted from narrative
+</ResponseField>
+
+## Bulk Retrieval Response
+
+When using the bulk endpoints (`GET /api/v1/icsr/eventos?ids=...`), the response is an object keyed by ICSR ID:
+
+```json
+{
+  "1234": [
+    {
+      "id": 5001,
+      "icsr_id": 1234,
+      "texto": "Rash eritematoso",
+      "gravedad": "No grave",
+      "causalidad": "Probable"
+    }
+  ],
+  "1235": [
+    {
+      "id": 5002,
+      "icsr_id": 1235,
+      "texto": "Náuseas",
+      "gravedad": "No grave",
+      "causalidad": "Posible"
+    },
+    {
+      "id": 5003,
+      "icsr_id": 1235,
+      "texto": "Vómitos",
+      "gravedad": "No grave",
+      "causalidad": "Posible"
+    }
+  ]
+}
+```
+
+## Example Requests
+
+### List Events
+
+```bash
+GET /api/v1/icsr/1234/eventos
+```
+
+**Response**:
+
+```json
+[
+  {
+    "id": 5001,
+    "icsr_id": 1234,
+    "texto": "Rash eritematoso generalizado",
+    "tipo_notificacion": "Inicial",
+    "fecha_inicio": "2024-01-15",
+    "fecha_fin": "2024-01-18",
+    "gravedad": "No grave",
+    "causalidad": "Probable",
+    "desenlace": "Recuperado",
+    "solo_ram_grave": null,
+    "meddra_pt_code": "10037844",
+    "meddra_pt_term": "Rash",
+    "meddra_llt_code": "10037868",
+    "meddra_llt_term": "Rash eritematoso",
+    "is_from_narrative": true
+  }
+]
+```
+
+### Add Multiple Events
+
+```json
+PUT /api/v1/icsr/1234/eventos
+
+{
+  "eventos": [
+    {
+      "texto": "Rash eritematoso generalizado",
+      "tipo_notificacion": "Inicial",
+      "fecha_inicio": "2024-01-15",
+      "fecha_fin": "2024-01-18",
+      "gravedad": "No grave",
+      "causalidad": "Probable",
+      "desenlace": "Recuperado",
+      "meddra_pt_code": "10037844",
+      "meddra_pt_term": "Rash",
+      "meddra_llt_code": "10037868",
+      "meddra_llt_term": "Rash eritematoso",
+      "is_from_narrative": true
+    },
+    {
+      "texto": "Prurito intenso",
+      "tipo_notificacion": "Inicial",
+      "fecha_inicio": "2024-01-15",
+      "fecha_fin": "2024-01-17",
+      "gravedad": "No grave",
+      "causalidad": "Probable",
+      "desenlace": "Recuperado",
+      "meddra_pt_code": "10037087",
+      "meddra_pt_term": "Prurito",
+      "is_from_narrative": true
+    }
+  ]
+}
+```
+
+### Update Event Severity and Causality
+
+```json
+PUT /api/v1/icsr/1234/eventos/5001
+
+{
+  "gravedad": "Grave",
+  "causalidad": "Definitiva",
+  "solo_ram_grave": "Si"
+}
+```
+
+### Update MedDRA Coding
+
+```json
+PUT /api/v1/icsr/1234/meddra
+
+{
+  "eventos": [
+    {
+      "texto": "Rash eritematoso generalizado",
+      "meddra_llt_code": "10037868",
+      "meddra_llt_term": "Rash eritematoso",
+      "meddra_pt_code": "10037844",
+      "meddra_pt_term": "Rash",
+      "is_from_narrative": true
+    }
+  ]
+}
+```
+
+### Clear All Events
+
+```json
+PUT /api/v1/icsr/1234/eventos
+
+{
+  "eventos": []
+}
+```
+
+## Behavior
+
+### Replace All Events Workflow
+
+1. **Delete existing events**: All current events for the case are deleted
+2. **Validate new events**: Each event in the array is validated
+3. **Insert new events**: Valid events are inserted in order
+4. **Commit transaction**: All changes are committed atomically
+5. **Return updated list**: The complete list of events is returned with assigned IDs
+
+### Field Normalization
+
+String fields are automatically trimmed:
+- Empty strings after trimming become `null`
+- Whitespace-only values become `null`
+- This applies to all text fields including MedDRA terms
+
+### MedDRA Coding
+
+MedDRA codes follow a hierarchical structure:
+
+- **LLT (Lowest Level Term)**: Most specific term (e.g., "Rash eritematoso")
+- **PT (Preferred Term)**: Standardized grouping term (e.g., "Rash")
+
+Both auto-coded and manually entered terms are supported:
+
+- Use `meddra_llt_code` and `meddra_pt_code` for coded terms
+- Use `meddra_pt_manual` for free-text terms when coding is not available
+
+### Event Ordering
+
+Events are ordered by their `id` in ascending order (insertion order). To reorder events, you must replace the entire array.
+
+## Validation
+
+The API validates:
+
+- ICSR case exists
+- User has update permissions
+- `texto` field is required and non-empty
+- Date formats are valid ISO-8601
+- Field lengths don't exceed database limits (max 255 chars for most fields)
+- MedDRA codes are strings (no format validation)
+
+## Error Responses
+
+### 400 Bad Request
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "eventos", 0, "texto"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
+}
+```
+
+### 404 Not Found
+
+```json
+{
+  "detail": "ICSR no encontrado"
+}
+```
+
+or
+
+```json
+{
+  "detail": "Evento no encontrado para este ICSR"
+}
+```
+
+## Use Cases
+
+### Narrative Extraction Workflow
+
+1. Parse the case narrative (e.g., using NLP)
+2. Extract individual adverse events
+3. Send all events via PUT `/icsr/{id}/eventos`
+4. Mark each event with `is_from_narrative: true`
+
+### Manual Event Entry
+
+1. User enters event details in a form
+2. Include severity, causality, outcome from dropdowns
+3. Add MedDRA coding if available
+4. Send as a single-event array
+5. Mark with `is_from_narrative: false`
+
+### Event Severity by Event (Not Case-Level)
+
+VIGIA supports individual severity assessment per event:
+
+1. Each event has its own `gravedad` field
+2. Update individual events via PUT `/icsr/{id}/eventos/{evento_id}`
+3. Case-level `gravedad` field on ICSR model represents overall severity
+
+### Causality Assessment Evolution
+
+1. Initial submission: `causalidad: "Posible"`
+2. After investigation: Update to `"Probable"`
+3. After expert review: Update to `"Definitiva"`
+4. Use single-event update endpoint to modify just causality
+
+## Best Practices
+
+### When Replacing Events
+
+1. **Always GET first**: Retrieve current events before making changes
+2. **Preserve existing events**: Include all events you want to keep
+3. **Add new events**: Append to the array
+4. **Remove unwanted events**: Exclude from the array
+5. **Send complete array**: Never send a partial list unless intentionally deleting events
+
+### MedDRA Coding
+
+1. **Use standard codes when available**: Prefer coded terms over free text
+2. **Include both LLT and PT**: Provide complete hierarchy
+3. **Store code and term**: Always pair code with the term text
+4. **Manual fallback**: Use `meddra_pt_manual` when coding is unavailable
+
+### Performance
+
+- Batch event updates in a single request rather than multiple individual updates
+- For MedDRA-only updates, use the `/meddra` endpoint (same behavior, semantic clarity)
+- Bulk retrieval is more efficient than individual GET requests for multiple cases
+
+## Related Endpoints
+
+- [Create Case](/api/icsr/create-case) - Create ICSR (events are usually added after case creation)
+- [Update Case](/api/icsr/update-case) - Update case-level severity and outcome
+- [List Cases](/api/icsr/list-cases) - List cases with their events

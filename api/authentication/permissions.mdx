@@ -1,0 +1,463 @@
+---
+title: 'Permissions & Access Control'
+description: 'Understanding role-based access control (RBAC) and permission management in VIGIA'
+---
+
+## Overview
+
+VIGIA implements a comprehensive role-based access control (RBAC) system with multi-level permissions. The system combines predefined roles with custom permissions to provide flexible access control across all modules.
+
+## Role Hierarchy
+
+VIGIA uses a flat role structure with predefined roles, each designed for specific user types in pharmacovigilance operations.
+
+### System Roles
+
+<AccordionGroup>
+  <Accordion title="Admin" icon="user-shield">
+    **Full system access with administrative privileges**
+    
+    - All module permissions (view, create, edit, delete)
+    - User management and role assignment
+    - System configuration
+    - Tenant management
+    - Audit log access
+    
+    **Priority**: When a user has multiple roles, `admin` is automatically selected as the primary role.
+  </Accordion>
+  
+  <Accordion title="QF (Qualified Person)" icon="user-doctor">
+    **Qualified Person for Pharmacovigilance**
+    
+    - Full ICSR management
+    - Case evaluation and causality assessment
+    - Report generation and submission
+    - Signal management
+    - Document review and approval
+    
+    **Typical Use**: Senior pharmacovigilance professionals responsible for case evaluation and regulatory submissions.
+  </Accordion>
+  
+  <Accordion title="Responsable FV (PV Manager)" icon="user-tie">
+    **Pharmacovigilance Manager**
+    
+    - Case assignment and workflow management
+    - Team oversight
+    - Report review
+    - Quality metrics monitoring
+    - Training coordination
+    
+    **Typical Use**: Pharmacovigilance managers overseeing operations and team performance.
+  </Accordion>
+  
+  <Accordion title="QA (Quality Assurance)" icon="clipboard-check">
+    **Quality Assurance Specialist**
+    
+    - Quality review and audits
+    - Process compliance monitoring
+    - Documentation review
+    - Audit trail access
+    - Training records management
+    
+    **Typical Use**: QA professionals ensuring compliance with GVP and regulatory standards.
+  </Accordion>
+  
+  <Accordion title="Dirección Técnica" icon="building">
+    **Technical Director**
+    
+    - Strategic oversight
+    - High-level reporting
+    - Regulatory strategy
+    - System configuration approval
+    
+    **Typical Use**: Technical directors with oversight responsibilities.
+  </Accordion>
+  
+  <Accordion title="Legal" icon="gavel">
+    **Legal Department**
+    
+    - Legal review of cases and reports
+    - Access to litigation-related cases
+    - Document access for legal purposes
+    - Report viewing (limited edit)
+    
+    **Typical Use**: Legal professionals reviewing cases for legal implications.
+  </Accordion>
+  
+  <Accordion title="Soporte" icon="headset">
+    **Support / Help Desk**
+    
+    - User support
+    - Basic configuration
+    - Training assistance
+    - Limited case viewing
+    
+    **Typical Use**: Support staff assisting users with system operations.
+  </Accordion>
+</AccordionGroup>
+
+## Permission Structure
+
+### Module-Based Permissions
+
+Permissions are organized by module and action type. The system supports granular permissions for each functional area.
+
+```json Permission Schema
+{
+  "module_name": {
+    "view": boolean,
+    "create": boolean,
+    "edit": boolean,
+    "delete": boolean,
+    "export": boolean,
+    "approve": boolean
+  }
+}
+```
+
+### Core Modules
+
+| Module | Description | Key Actions |
+|--------|-------------|-------------|
+| `icsr` | Individual Case Safety Reports | view, create, edit, delete, submit |
+| `reports` | Regulatory reporting | view, generate, submit, export |
+| `products` | Product management | view, create, edit, delete |
+| `surveillance` | Signal detection | view, create, edit, evaluate |
+| `documents` | Document management | view, upload, approve, sign |
+| `training` | Training management | view, create, assign, track |
+| `audit` | Audit logs | view, export |
+| `users` | User management | view, create, edit, delete, assign_roles |
+| `config` | System configuration | view, edit |
+
+## Role Assignment
+
+### Multiple Roles
+
+Users can be assigned multiple roles simultaneously. The system handles this through:
+
+1. **Primary Role Selection**: If `admin` is present, it's selected as primary; otherwise, the first role in the list
+2. **Permission Aggregation**: Users receive the union of all permissions from assigned roles
+3. **Token Claims**: Both primary role and full role list are included in JWT tokens
+
+### Database Schema
+
+Roles are stored in two ways:
+
+1. **Array Column**: `users.roles` (PostgreSQL ARRAY type) for backward compatibility
+2. **Many-to-Many Relationship**: `user_roles` junction table linking `users` and `roles` tables
+
+```sql User-Role Relationship
+-- users table
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(64) UNIQUE,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    hashed_password VARCHAR(255) NOT NULL,
+    roles VARCHAR[] NOT NULL DEFAULT '{}',
+    is_active BOOLEAN NOT NULL DEFAULT true
+);
+
+-- roles table
+CREATE TABLE roles (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(64) UNIQUE NOT NULL,
+    description VARCHAR(255),
+    permissions JSONB NOT NULL DEFAULT '{}',
+    active BOOLEAN NOT NULL DEFAULT true,
+    is_system BOOLEAN NOT NULL DEFAULT false
+);
+
+-- user_roles junction table
+CREATE TABLE user_roles (
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, role_id)
+);
+```
+
+## Custom Permissions
+
+In addition to role-based permissions, users can have custom permissions that override or extend role defaults.
+
+### User-Specific Permissions
+
+Stored in `users.custom_permissions` (JSONB column):
+
+```json Example Custom Permissions
+{
+  "icsr": {
+    "view": true,
+    "edit": true,
+    "delete": false,
+    "submit": false
+  },
+  "reports": {
+    "view": true,
+    "generate": false
+  },
+  "products": {
+    "view": true,
+    "edit": false
+  }
+}
+```
+
+### Permission Resolution Order
+
+1. **Custom Permissions**: User-specific overrides take highest priority
+2. **Role Permissions**: Combined permissions from all assigned roles
+3. **Default Deny**: If no permission is explicitly granted, access is denied
+
+## Checking Permissions
+
+The `/auth/me` endpoint returns the current user's permissions:
+
+```json GET /api/v1/auth/me Response
+{
+  "id": 123,
+  "email": "juan.perez@example.com",
+  "username": "juan.perez",
+  "role": "admin",
+  "roles": ["admin", "qf"],
+  "permissions": {
+    "icsr": {
+      "view": true,
+      "create": true,
+      "edit": true,
+      "delete": true,
+      "submit": true
+    },
+    "reports": {
+      "view": true,
+      "generate": true,
+      "submit": true,
+      "export": true
+    },
+    "users": {
+      "view": true,
+      "create": true,
+      "edit": true,
+      "delete": true,
+      "assign_roles": true
+    }
+  },
+  "is_active": true
+}
+```
+
+## Permission Enforcement
+
+### Backend Enforcement
+
+Permissions are enforced at the API level using dependency injection:
+
+```python Permission Dependencies
+from app.security.deps import require_permission
+
+@router.get("/icsrs/{icsr_id}")
+def get_icsr(
+    icsr_id: int,
+    user = Depends(require_permission("icsr", "view"))
+):
+    # Only users with icsr.view permission can access
+    return get_icsr_by_id(icsr_id)
+
+@router.delete("/icsrs/{icsr_id}")
+def delete_icsr(
+    icsr_id: int,
+    user = Depends(require_permission("icsr", "delete"))
+):
+    # Only users with icsr.delete permission can delete
+    return delete_icsr_by_id(icsr_id)
+```
+
+### Frontend Integration
+
+Clients should check permissions before displaying UI elements:
+
+```javascript Permission Checking
+// Fetch user info on login
+const userInfo = await fetch('/api/v1/auth/me', {
+  headers: { 'Authorization': `Bearer ${token}` }
+}).then(r => r.json());
+
+// Check permissions before showing UI
+if (userInfo.permissions.icsr?.delete) {
+  showDeleteButton();
+}
+
+if (userInfo.permissions.reports?.generate) {
+  enableReportGeneration();
+}
+
+// Check roles
+if (userInfo.roles.includes('admin')) {
+  showAdminPanel();
+}
+```
+
+## Role Management
+
+### Assigning Roles
+
+<Warning>
+  Users must have at least one role assigned to authenticate. Login attempts will fail with a 403 error if no roles are assigned.
+</Warning>
+
+Roles can be assigned through:
+
+1. **Direct Database Update**: Modify `users.roles` array or `user_roles` table
+2. **Admin API**: User management endpoints (requires admin role)
+3. **Tenant Configuration**: Default roles for new users per tenant
+
+### Role Activation
+
+Roles have an `active` flag that can be toggled without deleting the role:
+
+- **Active Roles**: Applied to user permissions
+- **Inactive Roles**: Retained in database but not enforced
+
+### System Roles Protection
+
+Roles with `is_system = true` cannot be deleted to ensure system integrity. These core roles include:
+
+- admin
+- qf
+- responsable_fv
+- qa
+
+## Multi-Tenant Permissions
+
+### Tenant Isolation
+
+Permissions are scoped to tenants:
+
+- Users in different tenants are completely isolated
+- Roles are tenant-specific
+- Cross-tenant access requires separate authentication
+
+### Tenant Header Validation
+
+The `X-Tenant` header is validated against the JWT token's `tenant` claim:
+
+```python Tenant Validation
+def validate_tenant_access(request: Request, token: str):
+    # Extract tenant from header
+    header_tenant = request.headers.get("x-tenant")
+    
+    # Extract tenant from token
+    payload = jwt.decode(token, SECRET_KEY)
+    token_tenant = payload.get("tenant")
+    
+    # Must match (or use legacy mode)
+    if header_tenant and token_tenant:
+        if header_tenant != token_tenant:
+            raise HTTPException(403, "Tenant mismatch")
+```
+
+## Best Practices
+
+### Security Guidelines
+
+1. **Principle of Least Privilege**: Assign minimum necessary roles
+2. **Regular Audits**: Review user roles and permissions periodically
+3. **Role Segregation**: Separate duties for compliance (e.g., QA separate from data entry)
+4. **Permission Checks**: Always validate permissions server-side, never trust client
+
+### Implementation Patterns
+
+```python Backend Pattern
+# Good: Server-side permission check
+@router.post("/icsrs")
+def create_icsr(
+    data: ICSRCreate,
+    user = Depends(require_permission("icsr", "create"))
+):
+    return create_new_icsr(data, user)
+
+# Bad: Trusting client-provided permission claim
+@router.post("/icsrs")
+def create_icsr(data: ICSRCreate, can_create: bool):
+    if can_create:  # Never trust client input!
+        return create_new_icsr(data)
+```
+
+```javascript Frontend Pattern
+// Good: Check permissions from /me endpoint
+const checkPermission = (module, action) => {
+  return userInfo.permissions[module]?.[action] === true;
+};
+
+if (checkPermission('icsr', 'create')) {
+  showCreateButton();
+}
+
+// Bad: Assuming permission based on role name
+if (userInfo.role === 'qf') {  // Too simplistic!
+  showCreateButton();
+}
+```
+
+## Troubleshooting
+
+### Common Permission Issues
+
+<AccordionGroup>
+  <Accordion title="403 Error: No Roles Assigned">
+    **Error**: `El usuario no tiene roles asignados. Contacte al administrador.`
+    
+    **Solution**: Assign at least one role to the user:
+    ```sql
+    UPDATE users SET roles = ARRAY['qf'] WHERE email = 'user@example.com';
+    ```
+  </Accordion>
+  
+  <Accordion title="Permission Not Working After Role Assignment">
+    **Cause**: Token still contains old role information
+    
+    **Solution**: Re-authenticate to get a new token with updated roles:
+    ```javascript
+    // Force re-login
+    localStorage.removeItem('token');
+    window.location.href = '/login';
+    ```
+  </Accordion>
+  
+  <Accordion title="Admin User Can't Access Endpoint">
+    **Cause**: Endpoint may require specific permission check beyond admin role
+    
+    **Solution**: Check endpoint implementation for custom permission requirements
+  </Accordion>
+  
+  <Accordion title="Tenant Access Denied">
+    **Cause**: Token tenant doesn't match X-Tenant header
+    
+    **Solution**: Ensure X-Tenant header matches the tenant used during login:
+    ```javascript
+    // Login with tenant
+    fetch('/api/v1/auth/login', {
+      headers: { 'X-Tenant': 'acme-pharma' },
+      // ...
+    });
+    
+    // All subsequent requests must use same tenant
+    fetch('/api/v1/icsrs', {
+      headers: { 
+        'Authorization': `Bearer ${token}`,
+        'X-Tenant': 'acme-pharma'  // Must match!
+      }
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Get Current User" icon="user" href="/api/authentication/login#get-apiv1authme">
+    Retrieve permissions for authenticated user
+  </Card>
+  <Card title="Login" icon="right-to-bracket" href="/api/authentication/login#post-apiv1authlogin">
+    Authenticate and receive role information
+  </Card>
+</CardGroup>

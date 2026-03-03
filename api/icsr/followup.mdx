@@ -1,0 +1,435 @@
+---
+title: 'ICSR Followup Communications'
+api: 'POST /api/v1/icsr/{icsr_id}/followup/send'
+description: 'Manage followup communications with reporters via email, SMS, and WhatsApp'
+---
+
+## Endpoints
+
+### Get Followup Thread
+
+```
+GET /api/v1/icsr/{icsr_id}/followup/thread
+```
+
+Retrieve the complete message thread for a case, including inbound and outbound communications.
+
+**Authentication**: Requires role `admin`, `qf`, `responsable_fv`, `qa`, `direccion_tecnica`, `legal`, or `soporte`
+
+### Send Followup Message
+
+```
+POST /api/v1/icsr/{icsr_id}/followup/send
+```
+
+Send a followup message to the case reporter via the specified channel.
+
+**Authentication**: Requires role `admin`, `qf`, `responsable_fv`, `qa`, `direccion_tecnica`, `legal`, or `soporte`
+
+## Path Parameters
+
+<ParamField path="icsr_id" type="integer" required>
+  The unique identifier of the ICSR case
+</ParamField>
+
+## Request Body (Send Message)
+
+<ParamField body="channel" type="string" required>
+  Communication channel to use:
+  - `email` - Send via email
+  - `sms` - Send via SMS (requires phone number)
+  - `whatsapp` - Send via WhatsApp (requires WhatsApp-enabled phone)
+</ParamField>
+
+<ParamField body="body" type="string" required>
+  Message content (minimum 1 character after trimming)
+</ParamField>
+
+## Response (Get Thread)
+
+<ResponseField name="items" type="array">
+  Array of message objects in chronological order
+  
+  <Expandable title="Message Object Schema">
+    <ResponseField name="id" type="integer">
+      Unique message identifier
+    </ResponseField>
+    
+    <ResponseField name="icsr_id" type="integer">
+      Parent ICSR case ID
+    </ResponseField>
+    
+    <ResponseField name="channel" type="string">
+      Communication channel: "email", "sms", or "whatsapp"
+    </ResponseField>
+    
+    <ResponseField name="direction" type="string">
+      Message direction:
+      - `in` - Inbound message from reporter
+      - `out` - Outbound message to reporter
+    </ResponseField>
+    
+    <ResponseField name="body" type="string">
+      Message content/text
+    </ResponseField>
+    
+    <ResponseField name="external_id" type="string">
+      External message identifier (e.g., email Message-ID, SMS ID)
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string" format="datetime">
+      Message timestamp
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of messages in the thread
+</ResponseField>
+
+## Response (Send Message)
+
+Returns a single message object with the same schema as thread items.
+
+<ResponseField name="id" type="integer">
+  Unique message identifier
+</ResponseField>
+
+<ResponseField name="icsr_id" type="integer">
+  Parent ICSR case ID
+</ResponseField>
+
+<ResponseField name="channel" type="string">
+  Channel used: "email", "sms", or "whatsapp"
+</ResponseField>
+
+<ResponseField name="direction" type="string">
+  Always "out" for sent messages
+</ResponseField>
+
+<ResponseField name="body" type="string">
+  Message content that was sent
+</ResponseField>
+
+<ResponseField name="external_id" type="string">
+  External message ID (e.g., SMTP Message-ID for email)
+</ResponseField>
+
+<ResponseField name="created_at" type="string" format="datetime">
+  Message send timestamp
+</ResponseField>
+
+## Contact Information Extraction
+
+The system automatically extracts contact details from the `reportante_contacto` field:
+
+- **Email**: Detected if the contact string contains "@"
+- **Phone**: Detected if the contact string is numeric or contains phone patterns
+- **WhatsApp**: Uses the same phone number detection as SMS
+
+Fallback fields:
+- `reportante_email` - Explicit email field
+- `reportante_telefono` - Explicit phone field
+
+## Email Threading
+
+When sending emails, the system implements proper email threading:
+
+1. **In-Reply-To Header**: References the Message-ID of the last inbound message
+2. **References Header**: Includes the full chain of Message-IDs from the thread
+3. **Message-ID Storage**: Captures and stores the Message-ID of sent emails for future threading
+
+This ensures email clients properly group followup messages in conversation threads.
+
+## Behavior
+
+### Auto-Status Update
+
+When a followup message is sent:
+
+1. If case status is "Pendiente" or empty, it's updated to "En progreso"
+2. This indicates active communication with the reporter
+3. Status update is attempted but won't block message sending if it fails
+
+### Missing Data Detection
+
+The system can automatically send followup requests:
+
+1. **Trigger**: New case creation or update
+2. **Detection**: System checks for missing required fields
+3. **Rate Limiting**: Only one auto-reply per hour per case
+4. **Channel**: Uses reporter's email if available
+5. **Template**: Pre-formatted message requesting specific missing information
+
+### Message Persistence
+
+All messages are stored in the database:
+
+- Outbound messages are logged immediately after sending
+- Inbound messages are logged when received (via email polling or webhook)
+- Messages are never deleted (audit trail)
+- External IDs link to original emails/SMS for reference
+
+## Example Requests
+
+### Get Message Thread
+
+```bash
+GET /api/v1/icsr/1234/followup/thread
+```
+
+**Response**:
+
+```json
+{
+  "items": [
+    {
+      "id": 1001,
+      "icsr_id": 1234,
+      "channel": "email",
+      "direction": "in",
+      "body": "Estimados, adjunto reporte de evento adverso con amoxicilina. Paciente presentó rash eritematoso...",
+      "external_id": "<abc123@hospital.com>",
+      "created_at": "2024-01-20T10:30:00Z"
+    },
+    {
+      "id": 1002,
+      "icsr_id": 1234,
+      "channel": "email",
+      "direction": "out",
+      "body": "Estimado Dr. Garcia,\n\nGracias por su reporte. Para completar la evaluación, necesitamos la siguiente información adicional:\n\n- Número de lote del producto\n- Fecha exacta de inicio del rash\n- Antecedentes de alergias del paciente\n\nSaludos,\nUnidad de Farmacovigilancia",
+      "external_id": "<def456@vigia.system>",
+      "created_at": "2024-01-20T11:15:00Z"
+    },
+    {
+      "id": 1003,
+      "icsr_id": 1234,
+      "channel": "email",
+      "direction": "in",
+      "body": "Buenas tardes,\n\nAdjunto la información solicitada:\n- Lote: LOT2024-001\n- Inicio del rash: 15/01/2024\n- No antecedentes de alergias conocidas\n\nSaludos",
+      "external_id": "<ghi789@hospital.com>",
+      "created_at": "2024-01-21T09:45:00Z"
+    }
+  ],
+  "total": 3
+}
+```
+
+### Send Email Followup
+
+```json
+POST /api/v1/icsr/1234/followup/send
+
+{
+  "channel": "email",
+  "body": "Estimado Dr. Garcia,\n\nGracias por la información adicional. Hemos actualizado el caso y procederemos con la evaluación de causalidad.\n\nLe informaremos cuando esté lista la resolución del caso.\n\nSaludos,\nUnidad de Farmacovigilancia"
+}
+```
+
+**Response**:
+
+```json
+{
+  "id": 1004,
+  "icsr_id": 1234,
+  "channel": "email",
+  "direction": "out",
+  "body": "Estimado Dr. Garcia,\n\nGracias por la información adicional. Hemos actualizado el caso y procederemos con la evaluación de causalidad.\n\nLe informaremos cuando esté lista la resolución del caso.\n\nSaludos,\nUnidad de Farmacovigilancia",
+  "external_id": "<jkl012@vigia.system>",
+  "created_at": "2024-01-21T10:30:00Z"
+}
+```
+
+### Send SMS Followup
+
+```json
+POST /api/v1/icsr/1234/followup/send
+
+{
+  "channel": "sms",
+  "body": "VIGIA: Hemos recibido su reporte del caso #1234. Le contactaremos por email para solicitar información adicional."
+}
+```
+
+### Send WhatsApp Message
+
+```json
+POST /api/v1/icsr/1234/followup/send
+
+{
+  "channel": "whatsapp",
+  "body": "Hola Dr. Garcia, le escribimos de VIGIA. ¿Podría confirmar el número de lote del producto reportado en el caso #1234?"
+}
+```
+
+## Email Configuration
+
+Email sending requires proper SMTP configuration. The system uses environment variables:
+
+- `SMTP_HOST` - SMTP server hostname
+- `SMTP_PORT` - SMTP server port (usually 587 for TLS)
+- `SMTP_USER` - SMTP username
+- `SMTP_PASSWORD` - SMTP password
+- `SMTP_FROM` - From email address
+- `SMTP_FROM_NAME` - From name (e.g., "VIGIA Farmacovigilancia")
+
+## SMS Configuration
+
+**Note**: SMS functionality is currently simulated. Integration with SMS gateway requires:
+
+1. SMS provider API credentials
+2. Implementation of provider-specific API calls
+3. Webhook setup for delivery status tracking
+
+## WhatsApp Configuration
+
+**Note**: WhatsApp functionality is currently simulated. Integration requires:
+
+1. WhatsApp Business API access
+2. Provider credentials (e.g., Twilio, Meta)
+3. Message template approval
+4. Webhook setup for inbound messages
+
+## Error Responses
+
+### 400 Bad Request - Empty Message
+
+```json
+{
+  "detail": "Mensaje vacío"
+}
+```
+
+### 400 Bad Request - No Contact Info
+
+```json
+{
+  "detail": "Este ICSR no tiene email del reportante"
+}
+```
+
+or
+
+```json
+{
+  "detail": "Este ICSR no tiene teléfono"
+}
+```
+
+or
+
+```json
+{
+  "detail": "Este ICSR no tiene WhatsApp/teléfono"
+}
+```
+
+### 400 Bad Request - Unsupported Channel
+
+```json
+{
+  "detail": "Canal no soportado"
+}
+```
+
+### 404 Not Found
+
+```json
+{
+  "detail": "ICSR no encontrado"
+}
+```
+
+### 502 Bad Gateway - SMTP Error
+
+```json
+{
+  "detail": "Fallo SMTP: Connection refused"
+}
+```
+
+## Use Cases
+
+### Requesting Missing Information
+
+1. Create case with incomplete data
+2. System auto-sends followup email requesting missing fields
+3. Reporter receives email with specific data points needed
+4. Reporter replies with information
+5. Staff updates case with received data
+
+### Manual Follow-Up
+
+1. Review case and identify need for clarification
+2. Use GET `/followup/thread` to review previous communications
+3. Compose followup question
+4. POST to `/followup/send` with `channel: "email"`
+5. System sends email with proper threading
+6. Message is logged in database
+
+### Multi-Channel Communication
+
+1. Initial report arrives via email
+2. Send email followup - no response
+3. Send SMS reminder after 3 days
+4. Send WhatsApp message with urgent cases
+5. All messages logged in unified thread
+
+### Reporter-Initiated Contact
+
+1. Reporter sends email to pharmacovigilance unit
+2. Email is received and parsed (via IMAP polling or webhook)
+3. System creates "in" direction message
+4. Message appears in thread
+5. Staff reviews and responds via `/followup/send`
+
+## Best Practices
+
+### Email Threading
+
+1. **Always use the API**: Don't send emails outside the system, as threading will break
+2. **Check thread first**: Review previous messages before sending
+3. **Clear subject lines**: System generates subject with case number
+4. **Professional tone**: Messages represent your organization
+
+### Channel Selection
+
+- **Email**: Best for detailed information requests, documentation
+- **SMS**: Good for brief reminders, urgent notifications
+- **WhatsApp**: Useful in regions where WhatsApp is primary communication method
+
+### Response Tracking
+
+1. Monitor thread regularly for new inbound messages
+2. Set reminders for cases awaiting reporter response
+3. Escalate cases with no response after configured timeframe
+4. Use case status to track communication state
+
+### Privacy & Compliance
+
+- Store minimal personal information
+- Follow data retention policies for messages
+- Implement proper access controls (role-based)
+- Encrypt sensitive data in transit (TLS/SSL)
+
+## Automatic Followup Configuration
+
+Environment variables control automatic followup behavior:
+
+- `AUTO_FOLLOWUP_ENABLED` - Enable/disable automatic followup (default: true)
+- `AUTO_FOLLOWUP_DELAY_HOURS` - Minimum hours between auto-followups (default: 1)
+- `REQUIRED_FIELDS` - Comma-separated list of required fields to check
+
+Example configuration:
+
+```env
+AUTO_FOLLOWUP_ENABLED=true
+AUTO_FOLLOWUP_DELAY_HOURS=24
+REQUIRED_FIELDS=paciente_peso,paciente_fecha_nacimiento,nro_lote
+```
+
+## Related Endpoints
+
+- [Create Case](/api/icsr/create-case) - Case creation may trigger auto-followup
+- [Update Case](/api/icsr/update-case) - Updates may trigger auto-followup or status changes
+- [List Cases](/api/icsr/list-cases) - Filter cases by status ("Pendiente" vs "En progreso")

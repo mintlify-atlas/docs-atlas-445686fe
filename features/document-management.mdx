@@ -1,0 +1,507 @@
+---
+title: "Document Management"
+description: "Digital signatures, document templates, version control, and regulatory document generation with PDF preview"
+---
+
+## Overview
+
+VIGIA's Document Management system provides comprehensive tools for creating, versioning, signing, and exporting regulatory documents with full audit trail and compliance features.
+
+<CardGroup cols={2}>
+  <Card title="Digital Signatures" icon="file-signature">
+    Secure electronic signatures with OTP verification
+  </Card>
+  <Card title="Template Engine" icon="file-code">
+    DOCX templates with variable replacement and PDF generation
+  </Card>
+  <Card title="Version Control" icon="code-branch">
+    Track document versions with change history
+  </Card>
+  <Card title="PDF Preview" icon="eye">
+    Auto-generate PDF previews from DOCX files
+  </Card>
+</CardGroup>
+
+## Document Model
+
+### Core Structure
+
+```python
+# Model: backend/app/models/documento.py:17-84
+class Documento:
+    # Identification
+    - codigo: Document code/identifier (e.g., "POE-001")
+    - titulo: Document title
+    - categoria: Category (SOP, Report, Form, etc.)
+    
+    # Ownership (flexible)
+    - owner_type: "IPS", "ICSR", "TRAINING", etc.
+    - owner_id: ID of the owning entity
+    
+    # Classification
+    - area: Department/area (QA, Medical, Regulatory)
+    
+    # Versioning
+    - version: Current version (e.g., "1.0", "2.3")
+    - vigente: Active status (True/False)
+    - current_version_id: Link to active DocumentoVersion
+    
+    # File attributes
+    - nombre_original: Original filename
+    - tipo_mime: MIME type (application/pdf, etc.)
+    - tamano_bytes: File size
+    - ruta_archivo: File path
+    
+    # Metadata
+    - tags: Comma-separated tags for search
+    - meta: JSONB field for custom metadata
+    
+    # Optional ICSR link
+    - icsr_id: Link to specific ICSR case
+```
+
+### Document Versions
+
+```python
+class DocumentoVersion:
+    - documento_id: Parent document
+    - version: Version string ("1.0", "1.1", "2.0")
+    - file_path: Path to version file
+    - file_name: Filename
+    - file_mime: MIME type
+    - file_size: File size in bytes
+    - created_at: Version creation timestamp
+```
+
+<Note>
+Each document can have multiple versions, but only one is "current" at any time. This enables full version history tracking.
+</Note>
+
+## Template System
+
+### Creating Templates
+
+Templates are DOCX files with variable placeholders:
+
+**Template location:** `app/templates/docs/{CODIGO}.docx`
+
+**Variable syntax:**
+```
+{{variable_name}}
+```
+
+**Example template:**
+```
+INFORME DE CAUSALIDAD
+
+Código de caso: {{codigo_caso}}
+Paciente: {{paciente_iniciales}}
+Producto sospechoso: {{producto_sospechoso}}
+Evento adverso: {{evento_adverso}}
+Fecha de inicio: {{fecha_inicio}}
+
+EVALUACIÓN DE CAUSALIDAD
+Algoritmo: Karch-Lasagna
+Puntuación: {{kl_score}}
+Clasificación: {{kl_clasificacion}}
+
+CONCLUSIONES
+{{conclusiones}}
+
+Fecha de emisión: {{emision}}
+Fecha de vigencia: {{vigencia}}
+```
+
+### Generating from Templates
+
+```bash
+POST /api/v1/documentos/generate
+Content-Type: application/json
+
+{
+  "codigo": "INFORME_CAUSALIDAD",
+  "version": "1.0",
+  "data": {
+    "codigo_caso": "ICSR-2024-001",
+    "paciente_iniciales": "ABC",
+    "producto_sospechoso": "Paracetamol 500mg",
+    "evento_adverso": "Hepatotoxicidad",
+    "fecha_inicio": "2024-01-15",
+    "kl_score": "7",
+    "kl_clasificacion": "Probable",
+    "conclusiones": "La relación de causalidad es probable según...",
+    "emision": "2024-03-01"
+  },
+  "owner_type": "ICSR",
+  "owner_id": 123
+}
+```
+
+**Features:**
+- **Auto-calculate dates**: If `emision` provided but not `vigencia`, automatically calculates `vigencia = emision + 3 years`
+- **DOCX output**: Generates Microsoft Word document
+- **PDF conversion**: Optional PDF generation via LibreOffice
+- **Version tracking**: Creates DocumentoVersion record
+
+**Response:**
+```json
+{
+  "documento_id": 456,
+  "version_id": 789,
+  "file_path": "/media/docs/INFORME_CAUSALIDAD/v1.0/INFORME_CAUSALIDAD_v1.0.docx",
+  "file_size": 45678,
+  "preview_url": "/api/v1/documentos/456/preview"
+}
+```
+
+## PDF Preview
+
+Automatic PDF preview generation from DOCX files:
+
+```bash
+GET /api/v1/documentos/{doc_id}/preview?disposition=inline
+```
+
+**Conversion methods:**
+
+1. **LibreOffice** (preferred, cross-platform):
+   ```bash
+   soffice --headless --convert-to pdf --outdir /output /path/to/file.docx
+   ```
+
+2. **docx2pdf** (Windows + Microsoft Word):
+   ```python
+   from docx2pdf import convert
+   convert("input.docx", "output.pdf")
+   ```
+
+**Caching:**
+- PDF previews are cached in `media/previews/pdf/`
+- Regenerated only if DOCX is newer than cached PDF
+- Significant performance improvement for repeated views
+
+**Source:** `backend/app/routers/documentos.py:106-135`
+
+<Warning>
+**System requirement**: LibreOffice must be installed on the server for PDF conversion. Check availability:
+```bash
+which soffice
+```
+</Warning>
+
+## Digital Signatures
+
+Secure electronic signature workflow with OTP verification:
+
+### Signature Flow
+
+<Steps>
+  <Step title="Request Signature">
+    Initiate signature request for a document
+    ```bash
+    POST /api/v1/firmas/request
+    {
+      "documento_id": 123,
+      "signer_email": "signer@company.com",
+      "reason": "Aprobación de reporte IPS Q1-2024"
+    }
+    ```
+  </Step>
+  
+  <Step title="Send OTP">
+    System sends One-Time Password to signer's email/phone
+    - 6-digit numeric code
+    - Valid for 10 minutes
+    - Single use only
+  </Step>
+  
+  <Step title="Verify and Sign">
+    Signer enters OTP to complete signature
+    ```bash
+    POST /api/v1/firmas/sign
+    {
+      "request_id": "uuid-1234",
+      "otp": "123456",
+      "signature_data": "base64_encoded_signature_image"
+    }
+    ```
+  </Step>
+  
+  <Step title="Audit Trail">
+    System records:
+    - Timestamp (with timezone)
+    - Signer identity
+    - IP address
+    - Document hash (SHA-256)
+    - Signature reason
+  </Step>
+</Steps>
+
+### Signature Metadata
+
+Each signature includes:
+
+```json
+{
+  "id": "firma-uuid-5678",
+  "documento_id": 123,
+  "signer": {
+    "user_id": 45,
+    "email": "signer@company.com",
+    "name": "Dr. Juan Pérez"
+  },
+  "timestamp": "2024-03-01T15:30:45-05:00",
+  "ip_address": "192.168.1.100",
+  "reason": "Aprobación de reporte IPS Q1-2024",
+  "document_hash": "sha256:a1b2c3d4...",
+  "otp_verified": true,
+  "signature_image": "data:image/png;base64,..."
+}
+```
+
+**Source:** `backend/app/routers/firmas.py`, `backend/app/models/firma.py`
+
+## Document Categories
+
+Common document types in pharmacovigilance:
+
+| Categoria | Description | Templates |
+|-----------|-------------|--------|
+| **SOP** | Standard Operating Procedures | POE-FV-001, SOP-QA-002 |
+| **REPORT** | Regulatory reports | INFORME_CAUSALIDAD, REPORTE_IPS |
+| **FORM** | Forms and questionnaires | FORMULARIO_RAM, CONSENTIMIENTO |
+| **ACTA** | Meeting minutes | ACTA_COMITE_FV |
+| **TRAINING** | Training materials | CAPACITACION_RAM, EVALUACION |
+| **CERTIFICATE** | Certificates | CERTIFICADO_CAPACITACION |
+
+## File Upload
+
+Upload existing documents:
+
+```bash
+POST /api/v1/documentos/upload
+Content-Type: multipart/form-data
+
+file: [binary file]
+codigo: "SOP-FV-001"
+titulo: "Procedimiento de Reporte de RAM"
+categoria: "SOP"
+area: "Farmacovigilancia"
+version: "2.0"
+tags: "sop,farmacovigilancia,ram"
+```
+
+**Supported formats:**
+- PDF (`.pdf`)
+- Microsoft Word (`.docx`)
+- Microsoft Excel (`.xlsx`)
+- Images (`.png`, `.jpg`, `.jpeg`)
+- Plain text (`.txt`)
+
+**Storage:**
+- Base directory: `media/docs/`
+- Path structure: `{codigo}/v{version}/{filename}`
+- Example: `media/docs/SOP-FV-001/v2.0/procedimiento_ram_v2.0.pdf`
+
+## Version Management
+
+### Create New Version
+
+```bash
+POST /api/v1/documentos/{doc_id}/version
+Content-Type: multipart/form-data
+
+file: [new version file]
+version: "2.1"
+change_notes: "Updated section 3.4 - causality assessment procedure"
+```
+
+System automatically:
+1. Creates new `DocumentoVersion` record
+2. Updates `current_version_id` in parent `Documento`
+3. Marks old version as non-current (but keeps it)
+4. Logs version change in audit trail
+
+### List Versions
+
+```bash
+GET /api/v1/documentos/{doc_id}/versions
+```
+
+**Response:**
+```json
+{
+  "versions": [
+    {
+      "id": 789,
+      "version": "2.1",
+      "is_current": true,
+      "created_at": "2024-03-01T10:00:00Z",
+      "file_size": 45678,
+      "download_url": "/api/v1/documentos/versions/789/download"
+    },
+    {
+      "id": 788,
+      "version": "2.0",
+      "is_current": false,
+      "created_at": "2023-12-01T10:00:00Z",
+      "file_size": 44123
+    }
+  ]
+}
+```
+
+## Search and Filter
+
+```bash
+GET /api/v1/documentos?
+  q=farmacovigilancia&
+  categoria=SOP&
+  area=QA&
+  vigente=true&
+  tags=ram,reporte&
+  owner_type=ICSR&
+  page=1&
+  page_size=20
+```
+
+**Filter parameters:**
+- `q`: Full-text search (codigo, titulo, tags)
+- `categoria`: Document category
+- `area`: Department/area
+- `vigente`: Active documents only (true/false)
+- `tags`: Comma-separated tags (AND logic)
+- `owner_type`: Filter by owner type
+- `owner_id`: Filter by specific owner
+
+## API Endpoints Summary
+
+### Document CRUD
+
+```bash
+# List/search documents
+GET /api/v1/documentos
+
+# Get single document
+GET /api/v1/documentos/{doc_id}
+
+# Upload new document
+POST /api/v1/documentos/upload
+
+# Generate from template
+POST /api/v1/documentos/generate
+
+# Update metadata
+PUT /api/v1/documentos/{doc_id}
+
+# Delete document
+DELETE /api/v1/documentos/{doc_id}
+```
+
+### Versions
+
+```bash
+# List versions
+GET /api/v1/documentos/{doc_id}/versions
+
+# Create new version
+POST /api/v1/documentos/{doc_id}/version
+
+# Download specific version
+GET /api/v1/documentos/versions/{version_id}/download
+```
+
+### Preview
+
+```bash
+# PDF preview (inline or download)
+GET /api/v1/documentos/{doc_id}/preview?disposition=inline
+```
+
+### Signatures
+
+```bash
+# Request signature
+POST /api/v1/firmas/request
+
+# Verify OTP and sign
+POST /api/v1/firmas/sign
+
+# Get signature details
+GET /api/v1/firmas/{firma_id}
+
+# List document signatures
+GET /api/v1/documentos/{doc_id}/firmas
+```
+
+## Integration Examples
+
+### Attach Document to ICSR
+
+```bash
+POST /api/v1/documentos/upload
+Content-Type: multipart/form-data
+
+file: [lab_results.pdf]
+codigo: "LAB-ICSR-2024-001"
+titulo: "Resultados de laboratorio - Caso #2024-001"
+categoria: "ANEXO"
+icsr_id: 123
+owner_type: "ICSR"
+owner_id: 123
+```
+
+### Generate IPS Report Document
+
+```bash
+POST /api/v1/documentos/generate
+{
+  "codigo": "REPORTE_IPS",
+  "version": "1.0",
+  "data": {
+    "producto_nombre": "Paracetamol 500mg",
+    "periodo_inicio": "2024-01-01",
+    "periodo_fin": "2024-06-30",
+    "casos_total": 15,
+    "casos_graves": 2,
+    "literaturas_detected": 45
+  },
+  "owner_type": "IPS",
+  "owner_id": 456
+}
+```
+
+## Code References
+
+| Feature | Implementation |
+|---------|---------------|
+| Document Model | `backend/app/models/documento.py:17-113` |
+| Router | `backend/app/routers/documentos.py:1-300` |
+| Template Rendering | `backend/app/routers/documentos.py:300-350` |
+| PDF Preview | `backend/app/routers/documentos.py:106-135` |
+| Signatures | `backend/app/routers/firmas.py` |
+| Version Control | `backend/app/models/documento.py:89-113` |
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Template Design" icon="palette">
+    - Use clear, descriptive variable names
+    - Include all required regulatory elements
+    - Test templates with sample data
+    - Version control template files
+  </Card>
+  
+  <Card title="Document Lifecycle" icon="rotate">
+    - Create new version for substantial changes
+    - Retire old versions (don't delete)
+    - Require signatures for critical documents
+    - Backup document storage regularly
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [ICSR Management](/features/icsr-management) - Attach lab results, medical reports
+- [IPS Reports](/features/ips-reports) - Generate periodic safety reports
+- [Surveillance](/features/surveillance) - Document regulatory communications

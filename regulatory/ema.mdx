@@ -1,0 +1,519 @@
+---
+title: 'EMA Integration'
+description: 'European Medicines Agency safety alerts and regulatory communications'
+icon: 'flag-eu'
+---
+
+## Overview
+
+VIGIA integrates with the European Medicines Agency (EMA) to retrieve safety alerts, medicine communications, and regulatory updates from the EMA news portal. The system handles rate limiting, translates content to Spanish, and normalizes pharmaceutical product information.
+
+## Key Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Safety Alerts" icon="shield-exclamation">
+    Scrapes EMA news portal for medicine safety communications
+  </Card>
+  <Card title="Rate Limiting" icon="gauge">
+    Built-in delays and retry logic to handle EMA's 429 responses
+  </Card>
+  <Card title="Auto-Translation" icon="language">
+    Translates English content to Spanish with sentence splitting
+  </Card>
+  <Card title="AI Refinement" icon="sparkles">
+    Uses Gemini to categorize products and summarize events
+  </Card>
+</CardGroup>
+
+## Data Structure
+
+Each EMA item contains:
+
+```python
+class EMAItem(dict):
+    titulo: str                      # Translated title
+    medicamento: str                # Product name (generic + detail)
+    evento: str                     # Event description / summary
+    url: str                        # Source URL
+    fecha_publicada: Optional[datetime]  # Publication date (Brussels TZ)
+```
+
+**Example:**
+```python
+{
+  "titulo": "EMA recomienda suspender la autorización de Aqneursa",
+  "medicamento": "Medicamento (Aqneursa - levacetylleucine)",
+  "evento": "El CHMP concluyó que los beneficios del medicamento no superan sus riesgos para el tratamiento de la enfermedad de maple syrup.",
+  "url": "https://www.ema.europa.eu/en/news/ema-recommends-suspension-marketing-authorisation-aqneursa",
+  "fecha_publicada": datetime(2024, 11, 15, 12, 0, tzinfo=ZoneInfo('Europe/Brussels'))
+}
+```
+
+## Implementation
+
+### Main Scraper
+
+<CodeGroup>
+```python backend/app/services/ema.py
+def scrape_ema(url: str = INDEX_DEFAULT) -> List[EMAItem]:
+    """
+    - If `url` is index /en/news → collects and parses up to 60 details
+    - If `url` is detail /en/news/<slug> → returns 1 item
+    - Any other path is attempted as index
+    """
+    path = re.sub(r"^https?://[^/]+", "", (url or "").strip())
+    items: List[EMAItem] = []
+    
+    # Single detail page
+    if DETAIL_PATH_RE.match(path):
+        it = _parse_detail(url)
+        return [it] if it else []
+    
+    # Index page (default)
+    index_url = url.rstrip("/")
+    if not INDEX_PATH_RE.match(path):
+        index_url = INDEX_DEFAULT
+    
+    links = _collect_detail_links(index_url, limit=INDEX_LIMIT)
+    if not links:
+        logger.error("EMA: no se encontraron enlaces desde índice.")
+        return []
+    
+    logger.info("EMA: %s URLs de detalle detectados desde índice.", len(links))
+    for href in links:
+        # Rate limit: soft delay between details to avoid 429
+        delay = DETAIL_DELAY_BASE + random.uniform(*DETAIL_DELAY_JITTER)
+        _sleep_with_jitter(delay)
+        it = _parse_detail(href)
+        if it:
+            items.append(it)
+    return items
+```
+</CodeGroup>
+
+### Detail Parser
+
+```python
+def _parse_detail(url: str) -> Optional[EMAItem]:
+    soup = _get(url)
+    title_en = _extract_title(soup)
+    cont = _content_container(soup)
+    event_par_en = _first_long_paragraph(cont)
+    pub_dt = _extract_publish_date(soup)
+    prod_cands = _product_candidates(cont, title_en)
+    
+    # LLM refinement (preferred)
+    llm = _llm_refine_fields({
+        "title_en": title_en,
+        "event_par_en": event_par_en,
+        "product_candidates": prod_cands,
+        "page_excerpt": _collect_excerpt(soup),
+    })
+    
+    if llm:
+        titulo_es = llm.get("titulo_es") or _translate_to_es(title_en) or "—"
+        evento_es = llm.get("evento_es") or _translate_to_es(event_par_en) or "—"
+        producto = llm.get("producto") or _guess_generic_es(title_en, event_par_en)
+        detalle = llm.get("producto_detalle") or ""
+        if detalle and detalle not in producto:
+            producto = f"{producto} ({detalle})"
+    else:
+        # Fallback: direct translation
+        titulo_es = _translate_to_es(title_en) or title_en or "—"
+        evento_es = _translate_to_es(event_par_en) or event_par_en or "—"
+        producto = _guess_generic_es(title_en, event_par_en)
+    
+    return EMAItem(
+        titulo=_norm(titulo_es) or "—",
+        medicamento=_norm(producto) or "—",
+        evento=_norm(evento_es) or "—",
+        url=url,
+        fecha_publicada=pub_dt,
+    )
+```
+
+## Rate Limiting & Retry Logic
+
+EMA enforces strict rate limits. VIGIA implements comprehensive handling:
+
+### Soft Rate Limiting
+
+```python
+DETAIL_DELAY_BASE = 0.9        # seconds between requests
+DETAIL_DELAY_JITTER = (0.2, 0.6)  # random jitter
+
+def _sleep_with_jitter(base: float) -> None:
+    jitter = random.uniform(0.1, 0.4)
+    time.sleep(max(0.05, base + jitter))
+
+# Applied between detail page requests
+for href in links:
+    delay = DETAIL_DELAY_BASE + random.uniform(*DETAIL_DELAY_JITTER)
+    _sleep_with_jitter(delay)
+    it = _parse_detail(href)
+```
+
+### HTTP Retry Strategy
+
+```python
+MAX_RETRIES = 5
+BACKOFF_FACTOR = 1.6  # exponential: 1.0s, 1.6s, 2.56s, 4.09s, 6.55s
+
+def _build_session() -> requests.Session:
+    s = requests.Session()
+    retry = Retry(
+        total=3,
+        connect=2,
+        read=2,
+        backoff_factor=0.6,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET"]),
+        raise_on_status=False,
+        respect_retry_after_header=False,  # EMA's header is often malformed
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=20, pool_maxsize=20)
+    s.headers.update(HEADERS)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
+```
+
+### Retry-After Header Parsing
+
+EMA sometimes sends malformed `Retry-After` headers (e.g., `"10.000"` with extra decimals):
+
+```python
+def _parse_retry_after(header_val: str | None) -> Optional[float]:
+    """
+    Interprets Retry-After (seconds or HTTP date). Tolerates "10.000".
+    Returns seconds (float) or None if not interpretable.
+    """
+    if not header_val:
+        return None
+    v = header_val.strip()
+    
+    # Attempt numeric (tolerant of separators)
+    try:
+        v_clean = re.sub(r"[^\d\.]", "", v)
+        if v_clean.count(".") > 1:
+            # Too many dots → take integer part
+            v_clean = v_clean.split(".", 1)[0]
+        secs = float(v_clean)
+        if secs >= 0:
+            return secs
+    except Exception:
+        pass
+    
+    # Attempt as HTTP date
+    try:
+        dt = parsedate_to_datetime(v)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        delta = (dt - datetime.now(tz=timezone.utc)).total_seconds()
+        if delta > 0:
+            return delta
+    except Exception:
+        pass
+    
+    return None
+```
+
+### Exponential Backoff
+
+```python
+def _get_html(url: str, *, max_retries: int = MAX_RETRIES, backoff_factor: float = BACKOFF_FACTOR) -> str:
+    sess = _session()
+    
+    for attempt in range(max_retries):
+        try:
+            r = sess.get(url, timeout=REQ_TIMEOUT, allow_redirects=True)
+        except RequestException as e:
+            sleep_time = (backoff_factor ** attempt)
+            logger.warning("EMA: error de red (%s). Reintento %d/%d en %.2fs", e, attempt + 1, max_retries, sleep_time)
+            time.sleep(sleep_time)
+            continue
+        
+        # Handle 429 explicitly
+        if r.status_code == 429:
+            retry_after = _parse_retry_after(r.headers.get("Retry-After"))
+            sleep_time = retry_after if retry_after is not None else (backoff_factor ** attempt)
+            logger.warning("EMA: 429 Too Many Requests. Reintento %d/%d en %.2fs (Retry-After=%s)",
+                           attempt + 1, max_retries, sleep_time, r.headers.get("Retry-After"))
+            time.sleep(max(0.5, sleep_time))
+            continue
+        
+        try:
+            r.raise_for_status()
+            return r.text
+        except HTTPError as e:
+            if 500 <= r.status_code < 600:
+                sleep_time = (backoff_factor ** attempt)
+                logger.warning("EMA: %s en %s. Reintento %d/%d en %.2fs",
+                               r.status_code, url, attempt + 1, max_retries, sleep_time)
+                time.sleep(sleep_time)
+                continue
+            # 4xx other than 429: fail immediately
+            logger.error("EMA: HTTP %s en %s (sin reintentos).", r.status_code, url)
+            raise
+    
+    raise RuntimeError(f"[EMA] Falló después de {max_retries} intentos: {url}")
+```
+
+## Product Identification
+
+### Generic Synonyms
+
+```python
+GENERIC_SYNONYMS = [
+    (re.compile(r"\b(vaccine|vaccination)\b", re.I), "Vacuna"),
+    (re.compile(r"\b(medicine|medicines|drug|drugs)\b", re.I), "Medicamento"),
+    (re.compile(r"\b(medical\s+device|device)\b", re.I), "Producto sanitario"),
+    (re.compile(r"\b(software|app)\b", re.I), "Software sanitario"),
+    (re.compile(r"\b(biologic|biosimilar)\b", re.I), "Biológico"),
+    (re.compile(r"\b(generic)\b", re.I), "Medicamento genérico"),
+]
+
+def _guess_generic_es(*texts: str) -> str:
+    blob = " ".join(_clean(t) for t in texts if t)
+    for rx, gen in GENERIC_SYNONYMS:
+        if rx.search(blob):
+            return gen
+    # Special case: CHMP meetings often mention multiple products
+    if re.search(r"\b(CHMP|committee|meeting|highlights)\b", blob, re.I):
+        return "Medicamentos (varios)"
+    return "Medicamento"
+```
+
+### Product Candidates Extraction
+
+```python
+def _product_candidates(container: Tag, title: str) -> List[str]:
+    cands: List[str] = []
+    # Extract from <strong> and <em> tags
+    for tag in container.find_all(["strong", "em"]):
+        t = _clean(tag.get_text(" ", strip=True))
+        if t and len(t) <= 100:
+            cands.append(t)
+    # Extract from first 2 lists
+    for ul in container.find_all(["ul", "ol"])[:2]:
+        for li in ul.find_all("li")[:3]:
+            t = _clean(li.get_text(" ", strip=True))
+            if t:
+                cands.append(t)
+    if title:
+        cands.append(title)
+    # Deduplicate
+    seen, out = set(), []
+    for c in cands:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out[:8]
+```
+
+## AI-Powered Enhancement
+
+```python
+def _llm_refine_fields(raw: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """
+    Uses Gemini to normalize/translate fields to Spanish.
+    
+    Returns:
+        {
+            "titulo_es": "Translated and cleaned title",
+            "evento_es": "1-3 sentence event summary",
+            "producto": "Generic product name (brief)",
+            "producto_detalle": "Brand/specific name if applicable"
+        }
+    """
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    
+    prompt = f"""
+You are a regulatory analyst. Return ONLY this JSON (no extra text):
+
+{{
+  "titulo_es": "...",
+  "evento_es": "...",
+  "producto": "...",
+  "producto_detalle": "..."
+}}
+
+Rules:
+- "titulo_es": translate and clean the title
+- "evento_es": 1-3 clear sentences based on first long paragraph or summary
+- "producto": GENERIC name brief (e.g.: "Medicamento", "Vacuna", "Producto sanitario",
+  "Apoyo regulatorio")
+- "producto_detalle": brand/name if applicable (e.g. "Aqneursa (levacetylleucine)"); or ""
+- If no clear single product (multiple communication), use "Medicamentos (varios)" and leave
+  "" in detail
+
+Data:
+{json.dumps({
+  "title_en": _norm(raw.get("title_en") or ""),
+  "event_par_en": _norm(raw.get("event_par_en") or ""),
+  "product_candidates": raw.get("product_candidates") or [],
+  "page_excerpt": _norm(raw.get("page_excerpt") or "")[:5500],
+}, ensure_ascii=False)}
+""".strip()
+    
+    resp = model.generate_content(prompt)
+    txt = (resp.text or "").strip()
+    s, e = txt.find("{"), txt.rfind("}")
+    if s >= 0 and e > s:
+        txt = txt[s : e + 1]
+    data = json.loads(txt)
+    return {
+        "titulo_es": _norm(data.get("titulo_es", "")),
+        "evento_es": _norm(data.get("evento_es", "")),
+        "producto": _norm(data.get("producto", "")),
+        "producto_detalle": _norm(data.get("producto_detalle", "")),
+    }
+```
+
+## Date Extraction
+
+EMA uses English date formats in Brussels timezone:
+
+```python
+EU_TZ = ZoneInfo("Europe/Brussels")
+
+ENG_MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+}
+
+DATE_EN_RE = re.compile(
+    r"(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
+    re.I,
+)
+
+def _extract_publish_date(soup: BeautifulSoup) -> Optional[datetime]:
+    # 1) <time datetime="..."> tag
+    t = soup.find("time")
+    if t and (t.get("datetime") or t.get_text()):
+        dt = _parse_en_date_to_aware(t.get("datetime") or t.get_text(" ", strip=True))
+        if dt:
+            return dt
+    
+    # 2) Meta tags
+    for meta in soup.find_all("meta"):
+        c = (meta.get("content") or "") + " " + (meta.get("value") or "")
+        dt = _parse_en_date_to_aware(c)
+        if dt:
+            return dt
+    
+    # 3) Body text
+    return _parse_en_date_to_aware(soup.get_text(" ", strip=True))
+
+def _parse_en_date_to_aware(s: str) -> Optional[datetime]:
+    if not s:
+        return None
+    # Try ISO format
+    try:
+        iso = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(iso)
+        return dt if dt.tzinfo else dt.replace(tzinfo=EU_TZ)
+    except Exception:
+        pass
+    # Try English date pattern
+    m = DATE_EN_RE.search(s)
+    if not m:
+        return None
+    d, mon_s, y = m.groups()
+    mon = ENG_MONTHS.get(mon_s.lower())
+    if not mon:
+        return None
+    try:
+        return datetime(int(y), int(mon), int(d), 12, 0, tzinfo=EU_TZ)
+    except Exception:
+        return None
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Optional: AI enhancement
+GEMINI_API_KEY=your_gemini_key_here
+```
+
+### Rate Limiting Configuration
+
+```python
+# Delays between detail requests
+DETAIL_DELAY_BASE = 0.9        # seconds
+DETAIL_DELAY_JITTER = (0.2, 0.6)  # jitter range
+
+# Backoff for retries
+MAX_RETRIES = 5
+BACKOFF_FACTOR = 1.6  # exponential backoff multiplier
+
+# Request configuration
+REQ_TIMEOUT = (6, 30)  # (connect, read) timeouts
+INDEX_LIMIT = 60  # max detail pages to scrape
+MIN_EVENT_CHARS = 120  # minimum event paragraph length
+```
+
+### Headers
+
+```python
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; VigiaBot/1.2; +https://example.invalid)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,es;q=0.6",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "DNT": "1",
+}
+```
+
+## API Endpoints
+
+### Search EMA News
+
+```http
+GET /api/v1/regulators/search/ema?q={query}&max_items={int}
+```
+
+**Parameters:**
+- `q` (required): Search term (min 1 character)
+- `max_items` (optional): Maximum results (default: 50)
+
+**Response:**
+```json
+[
+  {
+    "titulo": "EMA recomienda suspender la autorización de Aqneursa",
+    "medicamento": "Medicamento (Aqneursa - levacetylleucine)",
+    "evento": "El CHMP concluyó que los beneficios del medicamento no superan sus riesgos...",
+    "url": "https://www.ema.europa.eu/en/news/...",
+    "fecha_publicada": "2024-11-15T11:00:00Z"
+  }
+]
+```
+
+## Error Handling
+
+<Warning>
+EMA's aggressive rate limiting requires careful handling:
+- Soft delays between requests (0.9s + jitter)
+- Exponential backoff for 429 responses
+- Session pooling for connection reuse
+- Graceful degradation on persistent failures
+</Warning>
+
+## Related Pages
+
+<CardGroup cols={3}>
+  <Card title="DIGEMID" icon="flag-pe" href="/regulatory/digemid">
+    Peruvian regulatory authority
+  </Card>
+  <Card title="FDA" icon="flag-usa" href="/regulatory/fda">
+    US FDA device recalls
+  </Card>
+  <Card title="VigiAccess" icon="globe" href="/regulatory/vigiaccess">
+    WHO global database
+  </Card>
+</CardGroup>

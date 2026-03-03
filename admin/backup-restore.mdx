@@ -1,0 +1,650 @@
+---
+title: 'Backup & Restore'
+description: 'Database backups, data export/import, and recovery procedures for VIGIA'
+icon: 'database'
+---
+
+## Overview
+
+VIGIA's multi-tenant architecture requires careful backup and restore procedures. Each tenant database must be backed up independently, while the master database contains critical tenant registry information.
+
+## Backup Strategy
+
+### Database Hierarchy
+
+VIGIA uses a three-tier database structure:
+
+1. **Master Database**: Tenant registry (`clientes_saas` table)
+2. **Tenant Databases**: Individual client data (one per tenant)
+3. **Legacy Database**: Single-tenant deployments (optional)
+
+### Backup Frequency Recommendations
+
+| Database Type | Frequency | Retention | Priority |
+|--------------|-----------|-----------|----------|
+| Master | Hourly | 30 days | Critical |
+| Active Tenants | Daily | 90 days | High |
+| Demo Tenants | Weekly | 30 days | Medium |
+| Legacy | Daily | 90 days | High |
+
+## PostgreSQL Backup Methods
+
+### pg_dump (Logical Backup)
+
+Logical backups export database contents as SQL statements.
+
+#### Backup Single Tenant
+
+```bash
+# Basic backup
+pg_dump -h localhost -U postgres -d vigia_empresa1 > backup_empresa1_$(date +%Y%m%d).sql
+
+# Compressed backup (recommended)
+pg_dump -h localhost -U postgres -d vigia_empresa1 | gzip > backup_empresa1_$(date +%Y%m%d).sql.gz
+
+# Custom format (supports parallel restore)
+pg_dump -h localhost -U postgres -Fc -d vigia_empresa1 -f backup_empresa1_$(date +%Y%m%d).dump
+
+# Include CREATE DATABASE statement
+pg_dump -h localhost -U postgres -C -d vigia_empresa1 > backup_empresa1_$(date +%Y%m%d).sql
+```
+
+#### Backup Master Database
+
+```bash
+# Master database backup (critical!)
+pg_dump -h localhost -U postgres -Fc -d vigia_master -f backup_master_$(date +%Y%m%d).dump
+
+# With verbose output
+pg_dump -h localhost -U postgres -Fc -v -d vigia_master -f backup_master_$(date +%Y%m%d).dump
+```
+
+#### Backup All Tenants (Script)
+
+```bash
+#!/bin/bash
+# backup_all_tenants.sh
+
+BACKUP_DIR="/var/backups/vigia"
+DATE=$(date +%Y%m%d_%H%M%S)
+HOST="localhost"
+USER="postgres"
+
+# Create backup directory
+mkdir -p "$BACKUP_DIR/$DATE"
+
+# Backup master database
+echo "Backing up master database..."
+pg_dump -h "$HOST" -U "$USER" -Fc -d vigia_master \
+  -f "$BACKUP_DIR/$DATE/master.dump"
+
+# Get list of tenant databases
+TENANTS=$(psql -h "$HOST" -U "$USER" -d vigia_master -t -c \
+  "SELECT db_name FROM clientes_saas WHERE is_active = true;")
+
+# Backup each tenant
+for tenant in $TENANTS; do
+  echo "Backing up $tenant..."
+  pg_dump -h "$HOST" -U "$USER" -Fc -d "$tenant" \
+    -f "$BACKUP_DIR/$DATE/$tenant.dump"
+done
+
+# Create manifest
+ls -lh "$BACKUP_DIR/$DATE/" > "$BACKUP_DIR/$DATE/manifest.txt"
+
+echo "Backup completed: $BACKUP_DIR/$DATE"
+```
+
+### pg_basebackup (Physical Backup)
+
+Physical backups copy the entire PostgreSQL data directory.
+
+```bash
+# Full cluster backup
+pg_basebackup -h localhost -U postgres -D /var/backups/postgres_base -Ft -z -P
+
+# With WAL files for point-in-time recovery
+pg_basebackup -h localhost -U postgres -D /var/backups/postgres_base \
+  -Ft -z -P -X stream
+```
+
+**Use Cases**:
+- Full cluster recovery
+- Replication setup
+- Disaster recovery
+- Large databases (faster than pg_dump)
+
+## Automated Backup Scripts
+
+### Daily Backup with Rotation
+
+```bash
+#!/bin/bash
+# /usr/local/bin/vigia_daily_backup.sh
+
+set -e
+
+BACKUP_DIR="/var/backups/vigia"
+RETENTION_DAYS=90
+DATE=$(date +%Y%m%d)
+HOST="localhost"
+USER="postgres"
+LOG_FILE="/var/log/vigia_backup.log"
+
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+mkdir -p "$BACKUP_DIR"
+
+log "Starting VIGIA backup..."
+
+# Backup master
+log "Backing up master database..."
+pg_dump -h "$HOST" -U "$USER" -Fc -d vigia_master \
+  -f "$BACKUP_DIR/master_$DATE.dump" 2>> "$LOG_FILE"
+
+# Query active tenants from master
+log "Querying active tenants..."
+TENANTS=$(psql -h "$HOST" -U "$USER" -d vigia_master -t -c \
+  "SELECT subdominio FROM clientes_saas WHERE is_active = true;" 2>> "$LOG_FILE")
+
+# Backup each tenant
+for tenant_sub in $TENANTS; do
+    db_name="vigia_${tenant_sub}"
+    log "Backing up tenant: $db_name"
+    
+    pg_dump -h "$HOST" -U "$USER" -Fc -d "$db_name" \
+      -f "$BACKUP_DIR/${db_name}_$DATE.dump" 2>> "$LOG_FILE" || {
+        log "ERROR: Failed to backup $db_name"
+        continue
+    }
+done
+
+# Remove old backups
+log "Removing backups older than $RETENTION_DAYS days..."
+find "$BACKUP_DIR" -name "*.dump" -mtime +"$RETENTION_DAYS" -delete
+
+log "Backup completed successfully"
+
+# Optional: Upload to S3/cloud storage
+# aws s3 sync "$BACKUP_DIR" s3://my-vigia-backups/
+```
+
+### Cron Configuration
+
+```bash
+# Edit crontab
+sudo crontab -e
+
+# Add daily backup at 2 AM
+0 2 * * * /usr/local/bin/vigia_daily_backup.sh
+
+# Hourly master backup
+0 * * * * pg_dump -h localhost -U postgres -Fc vigia_master -f /var/backups/vigia/master_hourly_$(date +\%H).dump
+```
+
+## Restore Procedures
+
+### Restore Single Tenant
+
+#### From SQL Dump
+
+```bash
+# 1. Drop existing database (if needed)
+psql -h localhost -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'vigia_empresa1';"
+psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS vigia_empresa1;"
+
+# 2. Create fresh database
+psql -h localhost -U postgres -c "CREATE DATABASE vigia_empresa1;"
+
+# 3. Restore from SQL
+psql -h localhost -U postgres -d vigia_empresa1 < backup_empresa1_20240303.sql
+
+# Or from compressed
+gunzip -c backup_empresa1_20240303.sql.gz | psql -h localhost -U postgres -d vigia_empresa1
+```
+
+#### From Custom Format
+
+```bash
+# Restore using pg_restore
+pg_restore -h localhost -U postgres -d vigia_empresa1 -c backup_empresa1_20240303.dump
+
+# Parallel restore (faster for large databases)
+pg_restore -h localhost -U postgres -d vigia_empresa1 -j 4 backup_empresa1_20240303.dump
+
+# Verbose output
+pg_restore -h localhost -U postgres -d vigia_empresa1 -v backup_empresa1_20240303.dump
+
+# Create database and restore
+pg_restore -h localhost -U postgres -C -d postgres backup_empresa1_20240303.dump
+```
+
+### Restore Master Database
+
+**CRITICAL**: Restoring master database affects all tenant references.
+
+```bash
+# 1. Stop application
+systemctl stop vigia-backend
+
+# 2. Terminate connections
+psql -h localhost -U postgres -c \
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'vigia_master';"
+
+# 3. Drop and recreate
+psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS vigia_master;"
+psql -h localhost -U postgres -c "CREATE DATABASE vigia_master;"
+
+# 4. Restore
+pg_restore -h localhost -U postgres -d vigia_master backup_master_20240303.dump
+
+# 5. Verify
+psql -h localhost -U postgres -d vigia_master -c "SELECT count(*) FROM clientes_saas;"
+
+# 6. Restart application
+systemctl start vigia-backend
+```
+
+### Disaster Recovery (Full System)
+
+```bash
+#!/bin/bash
+# restore_full_system.sh
+
+BACKUP_DATE="20240303"
+BACKUP_DIR="/var/backups/vigia/$BACKUP_DATE"
+HOST="localhost"
+USER="postgres"
+
+set -e
+
+echo "Starting full system restore from $BACKUP_DATE..."
+
+# Stop application
+echo "Stopping VIGIA backend..."
+systemctl stop vigia-backend
+
+# Restore master
+echo "Restoring master database..."
+psql -h "$HOST" -U "$USER" -c "DROP DATABASE IF EXISTS vigia_master;"
+psql -h "$HOST" -U "$USER" -c "CREATE DATABASE vigia_master;"
+pg_restore -h "$HOST" -U "$USER" -d vigia_master "$BACKUP_DIR/master.dump"
+
+# Get tenant list from restored master
+TENANTS=$(psql -h "$HOST" -U "$USER" -d vigia_master -t -c \
+  "SELECT db_name FROM clientes_saas;")
+
+# Restore each tenant
+for tenant in $TENANTS; do
+    echo "Restoring $tenant..."
+    
+    # Drop if exists
+    psql -h "$HOST" -U "$USER" -c "DROP DATABASE IF EXISTS $tenant;"
+    
+    # Restore
+    if [ -f "$BACKUP_DIR/$tenant.dump" ]; then
+        pg_restore -h "$HOST" -U "$USER" -C -d postgres "$BACKUP_DIR/$tenant.dump"
+    else
+        echo "WARNING: Backup not found for $tenant"
+    fi
+done
+
+# Restart application
+echo "Starting VIGIA backend..."
+systemctl start vigia-backend
+
+echo "Full system restore completed"
+```
+
+## Data Export/Import
+
+### Export Tenant Data (JSON)
+
+Create a Python script to export tenant data as JSON:
+
+```python
+# export_tenant_data.py
+import json
+import sys
+from sqlalchemy import create_engine, MetaData
+from sqlalchemy.orm import sessionmaker
+
+def export_tenant_data(db_url: str, output_file: str):
+    engine = create_engine(db_url)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    # Export key tables
+    tables_to_export = [
+        'users', 'icsr', 'products', 'clients', 
+        'eventos_adversos', 'surveillance_alerts'
+    ]
+    
+    export_data = {}
+    
+    for table_name in tables_to_export:
+        print(f"Exporting {table_name}...")
+        result = session.execute(f"SELECT * FROM {table_name}")
+        rows = [dict(row) for row in result]
+        export_data[table_name] = rows
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(export_data, f, indent=2, default=str)
+    
+    print(f"Exported {sum(len(v) for v in export_data.values())} total records")
+    session.close()
+
+if __name__ == "__main__":
+    db_url = sys.argv[1]
+    output = sys.argv[2]
+    export_tenant_data(db_url, output)
+```
+
+Usage:
+```bash
+python export_tenant_data.py \
+  "postgresql://user:pass@localhost/vigia_empresa1" \
+  export_empresa1.json
+```
+
+### Export ICSR Cases (CSV)
+
+```sql
+-- export_icsr.sql
+\COPY (
+  SELECT 
+    i.id,
+    i.numero_caso,
+    i.fecha_recepcion,
+    i.estado,
+    i.gravedad,
+    i.pais_origen,
+    p.nombre_generico,
+    e.descripcion_evento
+  FROM icsr i
+  LEFT JOIN icsr_productos ip ON i.id = ip.icsr_id
+  LEFT JOIN productos p ON ip.producto_id = p.id
+  LEFT JOIN icsr_eventos ie ON i.id = ie.icsr_id
+  LEFT JOIN eventos_adversos e ON ie.evento_id = e.id
+  WHERE i.created_at >= '2024-01-01'
+) TO '/tmp/icsr_export.csv' WITH CSV HEADER;
+```
+
+### Import Data to New Tenant
+
+After tenant provisioning, import historical data:
+
+```python
+# import_tenant_data.py
+import json
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
+def import_tenant_data(db_url: str, json_file: str):
+    engine = create_engine(db_url)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    with open(json_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    # Import in dependency order
+    import_order = ['users', 'products', 'clients', 'icsr', 'eventos_adversos']
+    
+    for table_name in import_order:
+        if table_name not in data:
+            continue
+            
+        print(f"Importing {len(data[table_name])} rows to {table_name}...")
+        
+        for row in data[table_name]:
+            columns = ', '.join(row.keys())
+            placeholders = ', '.join(f":{k}" for k in row.keys())
+            sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+            
+            try:
+                session.execute(text(sql), row)
+            except Exception as e:
+                print(f"Error importing row: {e}")
+                continue
+        
+        session.commit()
+    
+    print("Import completed")
+    session.close()
+
+if __name__ == "__main__":
+    import sys
+    db_url = sys.argv[1]
+    json_file = sys.argv[2]
+    import_tenant_data(db_url, json_file)
+```
+
+## Tenant Deletion and Data Retention
+
+### Soft Delete (Deactivate)
+
+Preserves data for potential reactivation (`backend/app/routers/admin_clientes.py:124-128`):
+
+```python
+# Soft delete via API
+curl -X DELETE http://api.vigia.com/admin/clientes/5
+
+# Or directly in database
+UPDATE clientes_saas SET is_active = false WHERE id = 5;
+```
+
+**Data retained**: All tenant data remains in database, tenant cannot authenticate.
+
+### Hard Delete (Permanent)
+
+Completely removes tenant and database (`backend/app/routers/admin_clientes.py:130-142`):
+
+```bash
+# Via API (requires explicit ?hard=true)
+curl -X DELETE "http://api.vigia.com/admin/clientes/5?hard=true"
+```
+
+Implementation:
+1. Terminates all active connections to tenant database
+2. Drops tenant database using `DROP DATABASE`
+3. Deletes tenant record from `clientes_saas`
+4. Logs deletion with tenant ID, subdomain, and database name
+
+**Recommendation**: Always create backup before hard delete:
+
+```bash
+# Backup before deletion
+pg_dump -h localhost -U postgres -Fc vigia_empresa1 \
+  -f "archive/empresa1_deleted_$(date +%Y%m%d).dump"
+
+# Then delete
+curl -X DELETE "http://api.vigia.com/admin/clientes/5?hard=true"
+```
+
+## Point-in-Time Recovery (PITR)
+
+PostgreSQL supports recovering to any point in time using WAL archives.
+
+### Enable WAL Archiving
+
+Edit `postgresql.conf`:
+
+```ini
+# Enable WAL archiving
+wal_level = replica
+archive_mode = on
+archive_command = 'cp %p /var/lib/postgresql/wal_archive/%f'
+
+# Retention
+wal_keep_size = 1GB
+```
+
+Restart PostgreSQL:
+```bash
+systemctl restart postgresql
+```
+
+### Create Base Backup
+
+```bash
+pg_basebackup -h localhost -U postgres \
+  -D /var/backups/postgres_base_$(date +%Y%m%d) \
+  -Ft -z -P -X stream
+```
+
+### Recover to Point in Time
+
+```bash
+# 1. Stop PostgreSQL
+systemctl stop postgresql
+
+# 2. Restore base backup
+cd /var/lib/postgresql/14/main
+rm -rf *
+tar -xzf /var/backups/postgres_base_20240303/base.tar.gz
+
+# 3. Create recovery.conf
+cat > recovery.conf <<EOF
+restore_command = 'cp /var/lib/postgresql/wal_archive/%f %p'
+recovery_target_time = '2024-03-03 14:30:00'
+recovery_target_action = 'promote'
+EOF
+
+# 4. Start PostgreSQL (will recover to target time)
+systemctl start postgresql
+```
+
+## Cloud Backup Integration
+
+### AWS S3 Backup
+
+```bash
+#!/bin/bash
+# Upload to S3 after backup
+
+BACKUP_FILE="/var/backups/vigia/master_$(date +%Y%m%d).dump"
+S3_BUCKET="s3://my-vigia-backups/"
+
+# Create backup
+pg_dump -h localhost -U postgres -Fc vigia_master -f "$BACKUP_FILE"
+
+# Upload to S3
+aws s3 cp "$BACKUP_FILE" "$S3_BUCKET"
+
+# Set lifecycle policy (optional)
+aws s3api put-object-tagging --bucket my-vigia-backups \
+  --key "$(basename $BACKUP_FILE)" \
+  --tagging 'TagSet=[{Key=Retention,Value=90days}]'
+```
+
+### Google Cloud Storage
+
+```bash
+# Upload to GCS
+gsutil cp /var/backups/vigia/master_20240303.dump \
+  gs://my-vigia-backups/
+
+# Set retention policy
+gsutil lifecycle set retention.json gs://my-vigia-backups/
+```
+
+## Monitoring and Alerts
+
+### Backup Verification Script
+
+```bash
+#!/bin/bash
+# verify_backups.sh
+
+BACKUP_DIR="/var/backups/vigia"
+MAX_AGE_HOURS=26  # Alert if backup older than 26 hours
+
+latest_master=$(find "$BACKUP_DIR" -name "master_*.dump" -mtime -1 | wc -l)
+
+if [ "$latest_master" -eq 0 ]; then
+    echo "ALERT: No master backup in last 24 hours"
+    # Send notification
+    curl -X POST https://api.slack.com/webhooks/... \
+      -d '{"text": "VIGIA backup alert: No recent master backup"}'
+    exit 1
+fi
+
+echo "Backup verification passed"
+```
+
+### Cron for Verification
+
+```bash
+# Check backups every 6 hours
+0 */6 * * * /usr/local/bin/verify_backups.sh
+```
+
+## Best Practices
+
+### Backup Strategy
+
+1. **3-2-1 Rule**: 3 copies, 2 different media, 1 offsite
+2. **Test restores regularly**: Monthly restore drills
+3. **Automate backups**: Use cron or systemd timers
+4. **Monitor backup jobs**: Alert on failures
+5. **Document procedures**: Keep runbooks updated
+
+### Security
+
+1. **Encrypt backups**: Use `gpg` or cloud provider encryption
+2. **Secure credentials**: Use `.pgpass` or environment variables
+3. **Limit access**: Restrict backup file permissions (chmod 600)
+4. **Audit logs**: Track who accesses backups
+
+### Performance
+
+1. **Parallel dumps**: Use `-j` flag for large databases
+2. **Compression**: Always compress backups (`-Fc` or gzip)
+3. **Off-peak backups**: Schedule during low usage
+4. **Incremental backups**: Use WAL archiving for large databases
+
+### Retention
+
+1. **Daily backups**: Keep 90 days for active tenants
+2. **Weekly backups**: Keep 1 year
+3. **Monthly backups**: Keep indefinitely (compliance)
+4. **Archive deleted tenants**: Keep 2 years after deletion
+
+## Disaster Recovery Plan
+
+### Recovery Time Objective (RTO)
+
+- **Master Database**: < 1 hour
+- **Critical Tenants**: < 4 hours
+- **All Tenants**: < 24 hours
+
+### Recovery Point Objective (RPO)
+
+- **Master Database**: < 1 hour (hourly backups)
+- **Tenant Databases**: < 24 hours (daily backups)
+- **PITR**: < 5 minutes (WAL archiving)
+
+### Emergency Contacts
+
+```yaml
+# Document in /etc/vigia/emergency_contacts.yml
+contacts:
+  - role: Database Administrator
+    name: John Doe
+    phone: +51 999 999 999
+    email: dba@empresa.com
+  
+  - role: System Administrator
+    name: Jane Smith
+    phone: +51 888 888 888
+    email: sysadmin@empresa.com
+```
+
+## Related Documentation
+
+- [Multi-Tenant Architecture](/admin/multi-tenant)
+- [User Management](/admin/user-management)
+- [Configuration](/admin/configuration)

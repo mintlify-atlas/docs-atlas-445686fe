@@ -1,0 +1,655 @@
+---
+title: Installation Guide
+description: Complete installation and deployment guide for VIGIA pharmacovigilance platform
+---
+
+## Installation Options
+
+VIGIA can be deployed in several ways depending on your needs:
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose" icon="docker">
+    **Recommended for most users**
+    
+    Easy setup with all dependencies included
+  </Card>
+  <Card title="Manual Installation" icon="terminal">
+    **Full control**
+    
+    Install backend and frontend separately
+  </Card>
+  <Card title="Production Deployment" icon="server">
+    **Enterprise ready**
+    
+    Kubernetes, load balancing, high availability
+  </Card>
+  <Card title="Development Setup" icon="code">
+    **For contributors**
+    
+    Local development environment
+  </Card>
+</CardGroup>
+
+## System Requirements
+
+### Minimum Requirements
+
+- **CPU**: 2 cores
+- **RAM**: 4 GB
+- **Storage**: 20 GB
+- **OS**: Linux (Ubuntu 20.04+), macOS, Windows (with WSL2)
+
+### Recommended for Production
+
+- **CPU**: 4+ cores
+- **RAM**: 8+ GB
+- **Storage**: 100+ GB SSD
+- **OS**: Ubuntu 22.04 LTS or RHEL 8+
+- **Network**: Static IP, HTTPS support
+
+### Software Dependencies
+
+<Tabs>
+  <Tab title="Docker">
+    - Docker Engine 24.0+
+    - Docker Compose 2.20+
+  </Tab>
+  <Tab title="Manual">
+    **Backend:**
+    - Python 3.10+
+    - PostgreSQL 15+
+    - Redis 7+ (optional, for caching)
+    - Tesseract OCR 4.1+
+    - Poppler Utils
+    
+    **Frontend:**
+    - Node.js 18+
+    - npm 9+ or yarn 1.22+
+  </Tab>
+</Tabs>
+
+## Docker Compose Installation (Recommended)
+
+<Steps>
+  <Step title="Install Docker">
+    Install Docker and Docker Compose on your system:
+    
+    <CodeGroup>
+    ```bash Ubuntu/Debian
+    # Update package index
+    sudo apt-get update
+    
+    # Install Docker
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    
+    # Add user to docker group
+    sudo usermod -aG docker $USER
+    
+    # Install Docker Compose
+    sudo apt-get install docker-compose-plugin
+    ```
+    
+    ```bash macOS
+    # Install Docker Desktop
+    brew install --cask docker
+    
+    # Start Docker Desktop from Applications
+    ```
+    
+    ```bash Windows (WSL2)
+    # Install Docker Desktop for Windows
+    # Download from: https://docs.docker.com/desktop/install/windows-install/
+    
+    # Enable WSL2 backend in Docker Desktop settings
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Get VIGIA Source Code">
+    Clone or extract the VIGIA source code:
+    
+    ```bash
+    # If using git
+    git clone https://github.com/your-org/vigia.git
+    cd vigia
+    
+    # Or extract from archive
+    unzip vigia-source.zip
+    cd vigia
+    ```
+  </Step>
+
+  <Step title="Configure Environment">
+    Create a `.env` file with your configuration:
+    
+    ```bash .env
+    # ===== Database =====
+    DATABASE_URL=postgresql://postgres:postgres@db:5432/vigiadb
+    POSTGRES_USER=postgres
+    POSTGRES_PASSWORD=SecurePassword123!
+    POSTGRES_DB=vigiadb
+    
+    # ===== Security =====
+    SECRET_KEY=generate-a-secure-random-key-here-min-32-chars
+    JWT_ALGORITHM=HS256
+    ACCESS_TOKEN_EXPIRE_MINUTES=480
+    
+    # ===== CORS =====
+    CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,https://yourdomain.com
+    CORS_ALLOW_ALL=false
+    
+    # ===== Default Admin =====
+    DEFAULT_ADMIN_USERNAME=admin
+    DEFAULT_ADMIN_EMAIL=admin@yourdomain.com
+    DEFAULT_ADMIN_PASSWORD=ChangeThisPassword!
+    
+    # ===== Multi-Tenant (Optional) =====
+    # MASTER_DATABASE_URL=postgresql://postgres:postgres@db:5432/vigia_master
+    # TENANT_DB_TEMPLATE=postgresql://postgres:postgres@db:5432/{db_name}
+    
+    # ===== AI Features (Optional) =====
+    OPENAI_API_KEY=sk-your-openai-api-key
+    OPENAI_MODEL=gpt-4
+    GEMINI_API_KEY=your-gemini-api-key
+    
+    # ===== OCR Configuration =====
+    OCR_LANGS=spa+eng
+    # POPPLER_PATH=/usr/bin  # Linux
+    # TESSERACT_CMD=/usr/bin/tesseract  # Linux
+    
+    # ===== Email Configuration (Optional) =====
+    MAIL_PROVIDER=SMTP
+    SMTP_HOST=smtp.gmail.com
+    SMTP_PORT=587
+    SMTP_USER=your-email@gmail.com
+    SMTP_PASSWORD=your-app-password
+    SMTP_FROM_EMAIL=noreply@yourdomain.com
+    SMTP_FROM_NAME=VIGIA Pharmacovigilance
+    
+    # ===== VigiAccess Integration (Optional) =====
+    VIGIACCESS_API_BASE_URL=https://api.vigiaccess.org
+    VIGIACCESS_API_KEY=your-vigiaccess-key
+    
+    # ===== Logging =====
+    LOG_LEVEL=INFO
+    VIGIA_SILENCE_APSCHEDULER=0
+    VIGIA_SILENCE_MAIL_POLLER=1
+    
+    # ===== Background Jobs =====
+    FOLLOWUP_AUTOSEND_ENABLED=1
+    FOLLOWUP_AUTOSEND_INTERVAL_SEC=300
+    SEGUIMIENTO_ESPECIAL_AUTOSEND_ENABLED=0
+    SURVEILLANCE_SCHED_ENABLED=1
+    MAIL_POLL_ENABLED=0
+    ```
+    
+    <Warning>
+    **Security Best Practices:**
+    
+    - Generate a strong `SECRET_KEY` (min 32 characters)
+    - Use strong passwords for database and admin user
+    - Never commit `.env` to version control
+    - Use environment-specific configurations
+    </Warning>
+  </Step>
+
+  <Step title="Review Docker Compose Configuration">
+    The provided `docker-compose.yml` defines the services:
+    
+    ```yaml docker-compose.yml
+    version: "3.9"
+    
+    services:
+      db:
+        image: postgres:15
+        container_name: vigia_db
+        environment:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vigiadb
+        ports:
+          - "5432:5432"
+        volumes:
+          - pgdata:/var/lib/postgresql/data
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U postgres -d vigiadb"]
+          interval: 5s
+          timeout: 5s
+          retries: 10
+        restart: always
+    
+      api:
+        build:
+          context: ./backend
+          dockerfile: Dockerfile
+        container_name: vigia_api
+        environment:
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/vigiadb
+          SECRET_KEY: devsecret
+          CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+        depends_on:
+          db:
+            condition: service_healthy
+        ports:
+          - "8000:8000"
+        restart: unless-stopped
+    
+    volumes:
+      pgdata:
+    ```
+    
+    <Note>
+    Customize this file for production:
+    - Add frontend service
+    - Configure nginx reverse proxy
+    - Add Redis for caching
+    - Set up volume mounts for persistent storage
+    </Note>
+  </Step>
+
+  <Step title="Build and Start Services">
+    Launch the platform:
+    
+    ```bash
+    # Build images
+    docker-compose build
+    
+    # Start all services
+    docker-compose up -d
+    
+    # Check status
+    docker-compose ps
+    
+    # View logs
+    docker-compose logs -f api
+    ```
+    
+    Expected output:
+    ```
+    ✅ Tablas listas.
+    ✅ Tabla doc_formato creada.
+    ▶ surv_scheduler iniciado.
+    ▶ followup_scheduler_loop iniciado.
+    INFO:     Uvicorn running on http://0.0.0.0:8000
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    Test the deployment:
+    
+    ```bash
+    # Health check
+    curl http://localhost:8000/health
+    # {"ok": true}
+    
+    # API documentation
+    curl http://localhost:8000/docs
+    # Should return HTML page
+    
+    # Database tables
+    curl http://localhost:8000/api/v1/admin/db/debug
+    # {"tables": ["users", "icsr", "products", ...]}
+    ```
+  </Step>
+</Steps>
+
+## Manual Installation
+
+For more control or development purposes, install components separately.
+
+### Backend Setup
+
+<Steps>
+  <Step title="Install Python Dependencies">
+    ```bash
+    cd backend
+    
+    # Create virtual environment
+    python3.10 -m venv venv
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    
+    # Upgrade pip
+    pip install --upgrade pip
+    
+    # Install requirements
+    pip install -r requirements.txt
+    ```
+    
+    Key dependencies from `requirements.txt`:
+    - `fastapi[all]` - Web framework
+    - `sqlalchemy` - ORM
+    - `psycopg2-binary` - PostgreSQL adapter
+    - `python-jose[cryptography]` - JWT tokens
+    - `pytesseract` - OCR
+    - `openai` - AI integration
+    - `celery` - Background tasks
+  </Step>
+
+  <Step title="Install System Dependencies">
+    <CodeGroup>
+    ```bash Ubuntu/Debian
+    sudo apt-get update
+    sudo apt-get install -y \
+      tesseract-ocr \
+      tesseract-ocr-spa \
+      tesseract-ocr-eng \
+      poppler-utils \
+      libpq-dev \
+      python3-dev
+    ```
+    
+    ```bash macOS
+    brew install tesseract tesseract-lang poppler postgresql
+    ```
+    
+    ```bash Windows
+    # Install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki
+    # Install Poppler from: https://github.com/oschwartz10612/poppler-windows/releases/
+    # Add to PATH or set in .env:
+    # TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+    # POPPLER_PATH=C:\poppler\bin
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Set Up PostgreSQL">
+    ```bash
+    # Install PostgreSQL 15
+    sudo apt-get install postgresql-15 postgresql-contrib
+    
+    # Start service
+    sudo systemctl start postgresql
+    sudo systemctl enable postgresql
+    
+    # Create database and user
+    sudo -u postgres psql
+    ```
+    
+    ```sql
+    CREATE DATABASE vigiadb;
+    CREATE USER vigia_user WITH ENCRYPTED PASSWORD 'SecurePassword123!';
+    GRANT ALL PRIVILEGES ON DATABASE vigiadb TO vigia_user;
+    \q
+    ```
+    
+    Update `.env`:
+    ```bash
+    DATABASE_URL=postgresql://vigia_user:SecurePassword123!@localhost:5432/vigiadb
+    ```
+  </Step>
+
+  <Step title="Initialize Database">
+    ```bash
+    # Run migrations (if using Alembic)
+    alembic upgrade head
+    
+    # Or create tables directly
+    python -c "from app.core.database import Base, engine; Base.metadata.create_all(bind=engine)"
+    
+    # Create default admin user
+    python create_user.py
+    ```
+  </Step>
+
+  <Step title="Start Backend Server">
+    ```bash
+    # Development with auto-reload
+    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    
+    # Production with Gunicorn
+    gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker \
+      --bind 0.0.0.0:8000 \
+      --access-logfile - \
+      --error-logfile -
+    ```
+  </Step>
+</Steps>
+
+### Frontend Setup
+
+<Steps>
+  <Step title="Install Node.js Dependencies">
+    ```bash
+    cd frontend
+    
+    # Install packages
+    npm install
+    
+    # Or with yarn
+    yarn install
+    ```
+    
+    Key packages from `package.json`:
+    - `react` 19.1.0 - UI library
+    - `@coreui/react` 5.7.1 - UI components
+    - `react-router-dom` 7.8.0 - Routing
+    - `axios` 1.11.0 - HTTP client
+    - `chart.js` 4.5.1 - Charts
+  </Step>
+
+  <Step title="Configure API Endpoint">
+    Create `frontend/.env`:
+    
+    ```bash .env
+    VITE_API_BASE_URL=http://localhost:8000
+    VITE_API_VERSION=v1
+    ```
+  </Step>
+
+  <Step title="Start Development Server">
+    ```bash
+    # Development with hot reload
+    npm run dev
+    # Opens on http://localhost:5173
+    
+    # Build for production
+    npm run build
+    # Output in dist/
+    
+    # Preview production build
+    npm run preview
+    ```
+  </Step>
+
+  <Step title="Deploy Frontend (Production)">
+    Serve the built frontend with nginx:
+    
+    ```nginx /etc/nginx/sites-available/vigia
+    server {
+        listen 80;
+        server_name vigia.yourdomain.com;
+        
+        root /var/www/vigia/frontend/dist;
+        index index.html;
+        
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+        
+        location /api/ {
+            proxy_pass http://localhost:8000/api/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+    }
+    ```
+    
+    Enable and restart nginx:
+    ```bash
+    sudo ln -s /etc/nginx/sites-available/vigia /etc/nginx/sites-enabled/
+    sudo nginx -t
+    sudo systemctl restart nginx
+    ```
+  </Step>
+</Steps>
+
+## Production Deployment
+
+### SSL/HTTPS Configuration
+
+<Steps>
+  <Step title="Install Certbot">
+    ```bash
+    sudo apt-get install certbot python3-certbot-nginx
+    ```
+  </Step>
+  
+  <Step title="Obtain SSL Certificate">
+    ```bash
+    sudo certbot --nginx -d vigia.yourdomain.com
+    ```
+  </Step>
+  
+  <Step title="Auto-Renewal">
+    ```bash
+    sudo certbot renew --dry-run
+    ```
+  </Step>
+</Steps>
+
+### Systemd Service (Backend)
+
+Create `/etc/systemd/system/vigia-api.service`:
+
+```ini
+[Unit]
+Description=VIGIA Pharmacovigilance API
+After=network.target postgresql.service
+
+[Service]
+Type=notify
+User=vigia
+Group=vigia
+WorkingDirectory=/opt/vigia/backend
+Environment="PATH=/opt/vigia/backend/venv/bin"
+ExecStart=/opt/vigia/backend/venv/bin/gunicorn app.main:app \
+  -w 4 \
+  -k uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000 \
+  --access-logfile /var/log/vigia/access.log \
+  --error-logfile /var/log/vigia/error.log
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable vigia-api
+sudo systemctl start vigia-api
+sudo systemctl status vigia-api
+```
+
+### Database Backups
+
+```bash
+#!/bin/bash
+# /opt/vigia/scripts/backup.sh
+
+BACKUP_DIR="/backup/vigia"
+DATE=$(date +%Y%m%d_%H%M%S)
+FILE="$BACKUP_DIR/vigiadb_$DATE.sql"
+
+# Create backup
+pg_dump -U vigia_user vigiadb > "$FILE"
+
+# Compress
+gzip "$FILE"
+
+# Keep only last 30 days
+find $BACKUP_DIR -name "vigiadb_*.sql.gz" -mtime +30 -delete
+
+echo "Backup completed: $FILE.gz"
+```
+
+Add to crontab:
+```bash
+0 2 * * * /opt/vigia/scripts/backup.sh
+```
+
+## Multi-Tenant Deployment
+
+For multi-tenant setups:
+
+1. **Database per Tenant**: Each tenant gets isolated PostgreSQL database
+2. **Subdomain Routing**: `tenant1.vigia.com`, `tenant2.vigia.com`
+3. **Shared Application**: Single API instance serves all tenants
+
+```python
+# Example tenant routing in app/core/database.py
+from fastapi import Request
+from sqlalchemy import create_engine
+
+def get_tenant_db(request: Request):
+    host = request.headers.get("host", "")
+    tenant = host.split(".")[0]  # Extract subdomain
+    
+    db_url = settings.TENANT_DB_TEMPLATE.format(db_name=f"vigia_{tenant}")
+    engine = create_engine(db_url)
+    return engine
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Import Errors">
+    ```bash
+    # Reinstall dependencies
+    pip install -r requirements.txt --force-reinstall
+    
+    # Check Python version
+    python --version  # Should be 3.10+
+    ```
+  </Accordion>
+  
+  <Accordion title="Database Connection Failed">
+    ```bash
+    # Check PostgreSQL is running
+    sudo systemctl status postgresql
+    
+    # Test connection
+    psql -h localhost -U vigia_user -d vigiadb
+    
+    # Check DATABASE_URL format
+    # postgresql://user:password@host:port/database
+    ```
+  </Accordion>
+  
+  <Accordion title="OCR Not Working">
+    ```bash
+    # Verify Tesseract installation
+    tesseract --version
+    tesseract --list-langs
+    
+    # Install Spanish language data
+    sudo apt-get install tesseract-ocr-spa
+    
+    # Set paths in .env
+    TESSERACT_CMD=/usr/bin/tesseract
+    OCR_LANGS=spa+eng
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="gear" href="/admin/configuration">
+    Advanced configuration options
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/authentication/overview">
+    Explore the REST API
+  </Card>
+  <Card title="User Guide" icon="book" href="/guides/case-intake">
+    Learn platform features
+  </Card>
+  <Card title="Administration" icon="users-gear" href="/admin/user-management">
+    Set up users and access control
+  </Card>
+</CardGroup>

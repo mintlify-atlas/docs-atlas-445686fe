@@ -1,0 +1,469 @@
+---
+title: Case Evaluation
+description: Severity assessment, urgency classification, and product assignment workflows for ICSRs
+---
+
+After intake, every ICSR must be evaluated to determine severity, urgency, and assign it to the appropriate product. This guide covers the complete evaluation workflow.
+
+## Overview
+
+Case evaluation involves:
+
+- **Severity Assessment**: Classifying event gravity (grave/no grave)
+- **Urgency Classification**: Determining response timeline
+- **Product Assignment**: Linking to product catalog
+- **MedDRA Coding**: Mapping events to standardized terminology
+- **Evaluator Assignment**: Routing to responsible QF/pharmacovigilance officer
+
+## Evaluation Dashboard
+
+### Accessing Pending Cases
+
+<Steps>
+  <Step title="Navigate to Evaluation">
+    Go to **Cases** > **Evaluation** or click **Pending** in the dashboard
+    
+    The list shows all cases with status "Pendiente" ordered by reception date
+  </Step>
+  
+  <Step title="Filter by Criteria">
+    Use filters to focus on specific cases:
+    - **Severity** (`gravedad`): Grave, No grave, Sin clasificar
+    - **State** (`estado`): Pendiente, En proceso, Completado
+    - **Product**: Filter by suspected product name
+    - **Date Range**: Reception date or event date
+    - **Search**: Free text search (DNI, internal code, product)
+  </Step>
+  
+  <Step title="Sort and Prioritize">
+    Click column headers to sort:
+    - **Date**: Oldest first (default)
+    - **Severity**: Grave cases first
+    - **Urgency**: High priority first
+    
+    Grave cases are highlighted in red/orange
+  </Step>
+</Steps>
+
+**API Endpoint**:
+```python
+GET /api/v1/icsr-caso-prueba?page=1&page_size=10&estado=Pendiente&gravedad=Grave
+```
+
+## Severity Assessment
+
+### Classification Criteria
+
+VIGIA follows ICH E2D guidelines for severity classification:
+
+<Tabs>
+  <Tab title="Grave (Serious)">
+    An adverse event is **grave** if it:
+    
+    - Results in **death**
+    - Is **life-threatening**
+    - Requires **inpatient hospitalization** or prolongation of existing hospitalization
+    - Results in persistent or significant **disability/incapacity**
+    - Is a **congenital anomaly/birth defect**
+    - Is a medically important event (per medical judgment)
+    
+    **Field**: `gravedad = "Grave"`
+  </Tab>
+  
+  <Tab title="No Grave (Non-serious)">
+    An adverse event is **no grave** if:
+    
+    - It does NOT meet any of the serious criteria
+    - May require medical intervention
+    - Resolves without hospitalization
+    - No long-term consequences
+    
+    **Field**: `gravedad = "No grave"`
+  </Tab>
+  
+  <Tab title="Sin Clasificar (Unclassified)">
+    Cases pending evaluation or with insufficient information
+    
+    **Action**: Request followup for missing data
+  </Tab>
+</Tabs>
+
+### Severity Workflow
+
+<Steps>
+  <Step title="Open Case Detail">
+    Click on a case from the evaluation list to open full details
+    
+    **URL**: `/casos/{icsr_id}`
+  </Step>
+  
+  <Step title="Review Event Narrative">
+    Read the complete event description in the **Descripción del Evento** section:
+    - Event onset date and duration
+    - Symptoms and clinical course
+    - Medical interventions
+    - Outcome and recovery status
+  </Step>
+  
+  <Step title="Check Severity Indicators">
+    Look for key indicators in the narrative:
+    
+    <Check>**Hospitalization**: "hospitalized", "ingresó", "UCI", "emergency"</Check>
+    <Check>**Life-threatening**: "life-threatening", "riesgo de vida", "shock"</Check>
+    <Check>**Death**: "falleció", "death", "óbito"</Check>
+    <Check>**Disability**: "disability", "discapacidad", "secuela"</Check>
+    <Check>**Congenital**: "congenital", "congénita", "birth defect"</Check>
+  </Step>
+  
+  <Step title="Assign Severity">
+    In the **Evaluación** tab, select from dropdown:
+    ```
+    Gravedad: [ Grave ▼ ]
+    ```
+    
+    If "Grave", specify which criteria apply (multiple selection):
+    - [ ] Muerte
+    - [ ] Amenaza la vida
+    - [ ] Hospitalización
+    - [ ] Discapacidad
+    - [ ] Anomalía congénita
+    - [ ] Evento médicamente importante
+  </Step>
+  
+  <Step title="Add Rationale">
+    In the "Justificación" field, document your reasoning:
+    
+    **Example**:
+    ```
+    Clasificado como GRAVE por hospitalización requerida.
+    Paciente ingresó por 5 días debido a reacción anafiláctica.
+    ```
+  </Step>
+  
+  <Step title="Save Assessment">
+    Click **Save Evaluation**. The system:
+    - Updates `gravedad` field
+    - Logs change in audit trail
+    - Triggers severity-based notifications (if grave)
+    - Updates dashboard statistics
+  </Step>
+</Steps>
+
+**API Endpoint**:
+```python
+PUT /api/v1/icsr-caso-prueba/{icsr_id}
+Body: {
+  "gravedad": "Grave",
+  "ea_criterios_gravedad": ["hospitalizacion", "amenaza_vida"],
+  "ea_justificacion_gravedad": "Reacción anafiláctica con hospitalización UCI"
+}
+```
+
+## Urgency Classification
+
+Urgency determines the response timeline for followup and reporting:
+
+| Urgency | Timeline | Criteria |
+|---------|----------|----------|
+| **Alta** | 24 hours | Grave + unexpected + product in active surveillance |
+| **Media** | 72 hours | Grave or requires medical judgment |
+| **Baja** | 7 days | No grave, routine followup |
+
+### Setting Urgency
+
+<Steps>
+  <Step title="Evaluate Factors">
+    Consider:
+    - Severity classification
+    - Product under special monitoring
+    - Regulatory reporting deadlines
+    - Patient safety implications
+  </Step>
+  
+  <Step title="Assign Urgency Level">
+    In **Evaluación** tab:
+    ```
+    Urgencia: [ Alta ▼ ]
+    ```
+  </Step>
+  
+  <Step title="Set Deadline">
+    The system auto-calculates:
+    - **Alta**: `fecha_limite = fecha_recepcion + 1 day`
+    - **Media**: `fecha_limite = fecha_recepcion + 3 days`
+    - **Baja**: `fecha_limite = fecha_recepcion + 7 days`
+    
+    Override manually if needed
+  </Step>
+</Steps>
+
+## Product Assignment
+
+### Linking to Product Catalog
+
+VIGIA maintains a product catalog with regulatory and safety data. Linking cases to products enables:
+- Aggregate safety reporting (IPS/PSUR)
+- Signal detection
+- Product-specific workflows
+
+<Steps>
+  <Step title="Search Product Catalog">
+    In the case detail **Product** section, start typing the product name:
+    
+    ```
+    Producto Sospechoso: [Para________]
+    
+    Suggestions:
+    - Paracetamol 500mg Tabletas (Reg: XYZ-123)
+    - Paracetamol + Cafeína 500/65mg
+    - Paracetamol Gotas 100mg/ml
+    ```
+    
+    **API**: `GET /api/v1/products/search?q=para`
+  </Step>
+  
+  <Step title="Select Match">
+    Click the matching product to auto-fill:
+    - Product name
+    - Active ingredient (`producto_principio_activo`)
+    - Presentation and dosage
+    - Registration number
+    - Manufacturer
+    - Therapeutic class (ATC code)
+  </Step>
+  
+  <Step title="Handle No Match">
+    If product not found:
+    1. Verify spelling and search again
+    2. Create new product entry: **Products** > **Add New**
+    3. Enter:
+       - Commercial name
+       - Active ingredient(s)
+       - Registration number (DIGEMID)
+       - Manufacturer
+    4. Return to case and link
+  </Step>
+  
+  <Step title="Multiple Products">
+    For concomitant medications:
+    - **Suspected**: Mark as `producto_sospechoso`
+    - **Concomitant**: Add in **Concomitantes** section
+    
+    Each can be linked to catalog separately
+  </Step>
+</Steps>
+
+**Data Model**:
+```python
+class ICSR:
+    producto_sospechoso: str  # Free text
+    producto_id: int | None   # Link to Product.id
+    
+class ICSRConcomitante:
+    icsr_id: int
+    producto_nombre: str
+    producto_id: int | None
+```
+
+## MedDRA Coding
+
+Map adverse events to MedDRA (Medical Dictionary for Regulatory Activities) terms for standardized reporting.
+
+### MedDRA Hierarchy
+
+MedDRA uses a 5-level hierarchy:
+
+```
+SOC (System Organ Class)
+  └─ HLGT (High Level Group Term)
+      └─ HLT (High Level Term)
+          └─ PT (Preferred Term)  ← Primary coding level
+              └─ LLT (Lowest Level Term)
+```
+
+### Coding Workflow
+
+<Steps>
+  <Step title="Identify Events">
+    In **Eventos Adversos** section, list all distinct events from the narrative:
+    
+    **Example narrative**:
+    ```
+    "Patient experienced severe headache, nausea, and vomiting.
+    Developed urticaria on arms and trunk."
+    ```
+    
+    **Events to code**:
+    1. Headache (severe)
+    2. Nausea
+    3. Vomiting
+    4. Urticaria
+  </Step>
+  
+  <Step title="Search MedDRA">
+    For each event, search MedDRA database:
+    
+    Click **+ Add Event** > type event description:
+    ```
+    Event: [headache_______]
+    
+    MedDRA Suggestions:
+    PT: 10019211 - Headache
+    PT: 10019214 - Headache severe
+    PT: 10028256 - Migraine
+    ```
+    
+    **Service**: `meddra_suggest("headache")` (backend/app/services/)
+  </Step>
+  
+  <Step title="Select PT Term">
+    Choose the most specific Preferred Term (PT):
+    - "Headache severe" (PT: 10019214) for severe headache
+    - "Nausea" (PT: 10028813)
+    - "Vomiting" (PT: 10047700)
+    - "Urticaria" (PT: 10046735)
+    
+    The system auto-fills:
+    - `meddra_pt_code`
+    - `meddra_pt_term`
+    - `meddra_llt_code` (if LLT selected)
+    - `meddra_llt_term`
+  </Step>
+  
+  <Step title="Assign Event Attributes">
+    For each coded event, specify:
+    
+    **Severity** (per event):
+    - Leve (Mild)
+    - Moderado (Moderate)
+    - Grave (Severe)
+    
+    **Outcome** (`desenlace`):
+    - Recuperado
+    - Recuperándose
+    - No recuperado
+    - Recuperado con secuelas
+    - Muerte
+    - Desconocido
+    
+    **Dates**:
+    - `fecha_inicio`: Event onset
+    - `fecha_fin`: Resolution (if applicable)
+  </Step>
+  
+  <Step title="Save Events">
+    Click **Save Events**. The system stores events in:
+    ```python
+    POST /api/v1/icsr-caso-prueba/{icsr_id}/eventos
+    Body: {
+      "eventos": [
+        {
+          "texto": "Headache severe",
+          "meddra_pt_code": "10019214",
+          "meddra_pt_term": "Headache severe",
+          "gravedad": "Moderado",
+          "desenlace": "Recuperado",
+          "fecha_inicio": "2024-03-01",
+          "fecha_fin": "2024-03-03"
+        },
+        ...
+      ]
+    }
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  MedDRA coding is **required** for regulatory submissions (DIGEMID, IPS/PSUR). Incomplete coding will block export.
+</Note>
+
+## Evaluator Assignment
+
+Route cases to specific evaluators based on:
+- Product category
+- Severity
+- Workload distribution
+
+<Steps>
+  <Step title="Assign Responsible User">
+    In **Evaluación** tab:
+    ```
+    Responsable: [Select User ▼]
+    ```
+    
+    Users with `qf` or `responsable_fv` roles appear in dropdown
+  </Step>
+  
+  <Step title="Add Notes">
+    Optional internal notes for the evaluator:
+    ```
+    Notas: "Requiere revisión de causalidad urgente.
+            Producto en vigilancia especial."
+    ```
+  </Step>
+  
+  <Step title="Send Notification">
+    Click **Assign**. The system:
+    - Updates `evaluador_id` field
+    - Sends email notification to assigned user
+    - Adds to user's task list
+    - Changes status to "En proceso"
+  </Step>
+</Steps>
+
+**Notification Email**:
+```
+Subject: [VIGIA] Nuevo caso asignado #1234
+
+Se te ha asignado el caso ICSR #1234 para evaluación.
+
+Producto: Paracetamol 500mg
+Gravedad: Grave
+Fecha límite: 2024-03-05
+
+Ingresa a VIGIA para revisar el caso.
+```
+
+## Evaluation Checklist
+
+Before marking a case as "Completado", verify:
+
+<Check>**Severity classified** (Grave/No grave)</Check>
+<Check>**Urgency set** with appropriate deadline</Check>
+<Check>**Product linked** to catalog</Check>
+<Check>**All events coded** in MedDRA</Check>
+<Check>**Event dates** complete (onset, resolution)</Check>
+<Check>**Outcome documented** for each event</Check>
+<Check>**Evaluator assigned** (if applicable)</Check>
+<Check>**Missing data identified** for followup</Check>
+
+## Next Steps
+
+After evaluation:
+
+1. **Causality Assessment**: Determine relationship between product and event → [Causality Assessment](/guides/causality-assessment)
+2. **Followup Management**: Request missing information → [Followup Management](/guides/followup-management)
+3. **Reporting**: Include in periodic safety reports → [Generating Reports](/guides/generating-reports)
+
+## API Reference
+
+```python
+# Update evaluation
+PUT /api/v1/icsr-caso-prueba/{icsr_id}
+Body: {
+  "gravedad": "Grave",
+  "urgencia": "Alta",
+  "producto_id": 123,
+  "evaluador_id": 45
+}
+
+# Add MedDRA events
+POST /api/v1/icsr-caso-prueba/{icsr_id}/eventos
+Body: {"eventos": [...]}
+
+# Search products
+GET /api/v1/products/search?q=paracetamol
+
+# MedDRA suggest
+GET /api/v1/meddra/suggest?q=headache
+```

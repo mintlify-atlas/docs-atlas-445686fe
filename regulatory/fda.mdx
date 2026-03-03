@@ -1,0 +1,421 @@
+---
+title: 'FDA Integration'
+description: 'US FDA Adverse Event Reporting System (FAERS) integration and medical device recalls'
+icon: 'flag-usa'
+---
+
+## Overview
+
+VIGIA integrates with the US Food and Drug Administration (FDA) to retrieve medical device recalls, early alerts, and safety communications from the FDA's public portal. The system automatically translates content to Spanish and normalizes product information.
+
+## Key Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Device Recalls" icon="triangle-exclamation">
+    Scrapes medical device recalls and early alerts from FDA portal
+  </Card>
+  <Card title="Auto-Translation" icon="language">
+    Translates English content to Spanish using deep_translator
+  </Card>
+  <Card title="Product Normalization" icon="box">
+    Identifies generic device types and brand names from FDA data
+  </Card>
+  <Card title="AI Enhancement" icon="brain">
+    Uses Gemini to refine product categorization and event summaries
+  </Card>
+</CardGroup>
+
+## Supported Data Sources
+
+The FDA scraper targets these sections:
+
+- **Medical Device Recalls:** `/medical-devices/medical-device-recalls`
+- **Medical Device Safety:** `/medical-devices/medical-device-safety`
+- **Early Alerts:** Safety communications for urgent issues
+
+## Data Structure
+
+Each FDA item contains:
+
+```python
+class FDAItem(dict):
+    titulo: str                      # Translated title
+    medicamento: str                 # Generic type + brand (multiline)
+    evento: str                      # Event description / reason
+    url: str                        # Source URL
+    fecha_publicada: Optional[datetime]  # Publication date (NY timezone)
+```
+
+**Example:**
+```python
+{
+  "titulo": "Alerta temprana para el sistema de acceso vascular WATCHMAN",
+  "medicamento": "Sistema de acceso\nWATCHMAN",
+  "evento": "El dispositivo puede desprenderse durante el procedimiento, causando complicaciones vasculares graves.",
+  "url": "https://www.fda.gov/medical-devices/medical-device-recalls/...",
+  "fecha_publicada": datetime(2024, 8, 5, 12, 0, tzinfo=ZoneInfo('America/New_York'))
+}
+```
+
+## Implementation
+
+### Main Scraper
+
+<CodeGroup>
+```python backend/app/services/fda.py
+def scrape_fda(url: str) -> List[FDAItem]:
+    """
+    Entry point for FDA scraping.
+    - If URL is index page: collects and parses up to 60 detail pages
+    - If URL is detail page: parses single item
+    """
+    path = re.sub(r"^https?://[^/]+", "", (url or "").strip())
+    items: List[FDAItem] = []
+    
+    if INDEX_PATH_RE.match(path):
+        detail_links = _collect_detail_links(url, limit=INDEX_LIMIT)
+        for href in detail_links:
+            it = _parse_detail(href)
+            if it:
+                items.append(it)
+        return items
+    
+    if DETAIL_PATH_RE.match(path):
+        it = _parse_detail(url)
+        return [it] if it else []
+    
+    # Fallback: try as detail
+    it = _parse_detail(url)
+    return [it] if it else []
+```
+
+```python backend/app/routers/fda.py
+@router.get("/fda/search", response_model=List[FDAItemOut])
+async def fda_search_alias(
+    q: str = Query(..., description="Search term (name/IFA) in ES or EN"),
+    max_results: int = Query(10, ge=1, le=25),
+):
+    """
+    Frontend-friendly alias for FDA search.
+    Internally uses search_fda_by_term.
+    """
+    items = search_fda_by_term(q, max_results=max_results)
+    return [FDAItemOut(**item.__dict__) for item in items]
+```
+</CodeGroup>
+
+### Detail Page Parser
+
+Extracts structured data from FDA recall/alert pages:
+
+```python
+def _parse_detail(url: str) -> Optional[FDAItem]:
+    soup = _get(url)
+    titulo_en = _extract_title(soup)
+    fecha_pub = _extract_publish_date(soup)
+    evento_en = _extract_reason_paragraph(soup)
+    
+    # Extract product candidates
+    raw_products = _extract_products(soup)
+    producto_candidates = [p.strip() for p in (raw_products.split(",") if raw_products else [])]
+    
+    # Get JSON-LD structured data
+    jl = _extract_jsonld_product(soup)
+    jl_name = jl.get("name", "")
+    jl_brand = jl.get("brand", "")
+    jl_model = jl.get("model", "")
+    
+    # LLM refinement (preferred)
+    llm_data = _llm_refine_fields({
+        "title_en": titulo_en,
+        "reason_en": evento_en,
+        "product_candidates": producto_candidates or [jl_name],
+        "page_excerpt": _collect_excerpt(soup),
+    })
+    
+    if llm_data:
+        titulo_es = llm_data.get("titulo_es") or _translate_to_es(titulo_en)
+        evento_es = llm_data.get("evento_es") or _translate_to_es(evento_en)
+        gen_es = llm_data.get("producto_generico_es") or ""
+        marca = llm_data.get("marca_o_linea") or ""
+    else:
+        # Fallback: direct translation
+        titulo_es = _translate_to_es(titulo_en)
+        evento_es = _translate_to_es(evento_en)
+        gen_es = _guess_generic_es_extended(titulo_en, " ".join(producto_candidates), evento_en)
+        marca = _guess_brand_better(titulo_en, " ".join(producto_candidates))
+    
+    # Final product composition (always two lines when brand exists)
+    producto_final = gen_es
+    if marca and marca.lower() not in gen_es.lower():
+        producto_final = f"{gen_es}\n{marca}"
+    
+    return FDAItem(
+        titulo=titulo_es or "—",
+        medicamento=producto_final or "Dispositivo médico",
+        evento=evento_es or "—",
+        url=url,
+        fecha_publicada=fecha_pub,
+    )
+```
+
+## Product Identification
+
+### Generic Synonyms
+
+The system recognizes common medical device patterns:
+
+```python
+GENERIC_SYNONYMS = [
+    (re.compile(r"\b(access\s+system|introducer|sheath)\b", re.I), "Sistema de acceso"),
+    (re.compile(r"\b(infusion\s+set|administration\s+set)\b", re.I), "Conjunto de infusión"),
+    (re.compile(r"\b(catheter|ablation\s+catheter)\b", re.I), "Catéter"),
+    (re.compile(r"\b(stent|endoprosthesis)\b", re.I), "Stent vascular"),
+    (re.compile(r"\b(resuscitator|ambu)\b", re.I), "Resucitador manual"),
+    (re.compile(r"\b(glucose\s+monitor|cgm)\b", re.I), "Monitor de glucosa (CGM)"),
+    (re.compile(r"\b(pacemaker)\b", re.I), "Marcapasos"),
+    (re.compile(r"\b(defibrillator)\b", re.I), "Desfibrilador"),
+    (re.compile(r"\b(ventilator)\b", re.I), "Ventilador"),
+    # Pharmaceuticals
+    (re.compile(r"\b(vaccine|vaccination)\b", re.I), "Vacuna"),
+    (re.compile(r"\b(active\s+ingredient|api)\b", re.I), "Ingrediente farmacéutico activo (IFA)"),
+]
+```
+
+### Brand Detection
+
+Extracts brand names using pattern matching:
+
+```python
+_BRAND_ALLCAPS_RE = re.compile(r"\b([A-Z][A-Z0-9\-]{3,})\b")
+_BRAND_CAMEL_RE = re.compile(r"\b([A-Z][a-zA-Z0-9\-]{3,})\b")
+
+_BRAND_STOP = {
+    "ACCESS", "SYSTEM", "SET", "INFUSION", "STENT", "CATHETER",
+    "DEVICE", "PUMP", "VALVE", "SENSOR", "MONITOR", "CIRCUIT"
+}
+
+def _guess_brand_better(*texts: str) -> str:
+    joined = " || ".join([_norm(x or "") for x in texts if x])
+    # Try all-caps patterns first (e.g., WATCHMAN, DEXCOM)
+    for m in _BRAND_ALLCAPS_RE.finditer(joined):
+        c = m.group(1)
+        if c.upper() not in _BRAND_STOP:
+            return c
+    # Then try CamelCase
+    for m in _BRAND_CAMEL_RE.finditer(joined):
+        c = m.group(1)
+        if c.upper() not in _BRAND_STOP:
+            return c
+    return ""
+```
+
+## AI-Powered Enhancement
+
+When `GEMINI_API_KEY` is configured, the system uses Gemini 1.5 Flash to refine extracted data:
+
+```python
+def _llm_refine_fields(raw: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """
+    Uses Gemini to normalize fields to Spanish and identify generic products.
+    
+    Returns:
+        {
+            "titulo_es": "Translated and cleaned title",
+            "evento_es": "1-3 sentence event summary",
+            "producto_generico_es": "Generic device type (brief)",
+            "marca_o_linea": "Brand/series if clear",
+            "modelo_o_variante": "Model/lot if adds value"
+        }
+    """
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    
+    prompt = f"""
+You are a regulatory analyst preparing health reports in SPANISH.
+You will receive information extracted from an FDA page (recalls/early alerts) and must return
+STRICT JSON with this EXACT form (no extra text):
+
+{{
+  "titulo_es": "...",
+  "evento_es": "...",
+  "producto_generico_es": "...",
+  "marca_o_linea": "...",
+  "modelo_o_variante": "..."
+}}
+
+Rules:
+- "titulo_es": translate and adjust title to Spanish, clear and concise
+- "evento_es": summarize in 1-3 sentences the FIRST PARAGRAPH explaining cause
+- "producto_generico_es": return GENERIC device name in Spanish, brief
+  (e.g.: "Sistema de acceso", "Conjunto de infusión", "Stent vascular", "Catéter",
+   "Monitor de glucosa (CGM)", "Ingrediente farmacéutico activo (IFA)")
+- "marca_o_linea": if there's a clear brand/series, indicate it; otherwise ""
+- "modelo_o_variante": lot/model/variant if adds value; otherwise ""
+- Do not invent data. If something is unclear, put "" in that field.
+- Respond ONLY the JSON, no comments.
+
+Data:
+- title_en: {json.dumps(raw.get("title_en"))}
+- reason_paragraph_en: {json.dumps(raw.get("reason_en"))}
+- product_candidates: {json.dumps(raw.get("product_candidates"), ensure_ascii=False)}
+- page_excerpt_en: {json.dumps(raw.get("page_excerpt"))}
+""".strip()
+    
+    resp = model.generate_content(prompt)
+    txt = (resp.text or "").strip()
+    # Extract JSON from response
+    start = txt.find("{")
+    end = txt.rfind("}")
+    if start >= 0 and end > start:
+        txt = txt[start:end+1]
+    data = json.loads(txt)
+    return data
+```
+
+## Translation
+
+Automatic English-to-Spanish translation using `deep_translator`:
+
+```python
+from deep_translator import GoogleTranslator
+
+@lru_cache(maxsize=4096)
+def _translate_impl(key: str) -> str:
+    if len(key) <= 4500:
+        return GoogleTranslator(source="auto", target="es").translate(key)
+    
+    # For long texts, split by sentences
+    parts = re.split(r"(?<=[\.\?!])\s+", key)
+    out, buf = [], ""
+    for p in parts:
+        if len(buf) + len(p) + 1 > 4500:
+            out.append(GoogleTranslator(source="auto", target="es").translate(buf))
+            buf = p
+        else:
+            buf = (buf + " " + p).strip()
+    if buf:
+        out.append(GoogleTranslator(source="auto", target="es").translate(buf))
+    return " ".join(out)
+```
+
+## Date Extraction
+
+FDA uses US date format (`MM/DD/YYYY`) in Eastern Time:
+
+```python
+NY_TZ = ZoneInfo("America/New_York")
+DATE_US_RE = re.compile(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})")
+DATE_LABEL_RE = re.compile(r"(content\s+current\s+as\s+of|publish(?:ed)?\s+date)", re.I)
+
+def _extract_publish_date(soup: BeautifulSoup) -> Optional[datetime]:
+    # Look for date label in page
+    node = soup.find(string=DATE_LABEL_RE)
+    if node:
+        # Extract date from nearby text
+        segments = []
+        if hasattr(node, 'parent'):
+            segments.append(node.parent.get_text(" ", strip=True))
+        sib = getattr(node, 'next_sibling', None)
+        if sib:
+            segments.append(str(sib))
+        dt = _parse_us_date_to_aware(" ".join(segments))
+        if dt:
+            return dt
+    
+    # Fallback: check meta tags
+    for meta in soup.find_all("meta"):
+        content = (meta.get("content") or "") + " " + (meta.get("value") or "")
+        dt = _parse_us_date_to_aware(content)
+        if dt:
+            return dt
+    
+    return None
+
+def _parse_us_date_to_aware(s: str) -> Optional[datetime]:
+    m = DATE_US_RE.search(s)
+    if not m:
+        return None
+    m_, d_, y_ = m.groups()
+    try:
+        return datetime(int(y_), int(m_), int(d_), 12, 0, tzinfo=NY_TZ)
+    except Exception:
+        return None
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Optional: AI enhancement
+GEMINI_API_KEY=your_gemini_key_here
+```
+
+### Request Configuration
+
+```python
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; VigiaBot/1.0; +https://example.invalid)",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+REQ_TIMEOUT = 25  # seconds
+INDEX_LIMIT = 60  # max detail pages to scrape from index
+MIN_EVENT_CHARS = 120  # minimum paragraph length for event description
+```
+
+## API Endpoints
+
+### Search by Term
+
+```http
+GET /api/v1/fda/search?q={term}&max_results={int}
+```
+
+**Parameters:**
+- `q` (required): Search term (name/IFA) in Spanish or English
+- `max_results` (optional): Maximum results (1-25, default: 10)
+
+**Response:**
+```json
+[
+  {
+    "titulo": "Alerta temprana para el sistema de acceso vascular WATCHMAN",
+    "medicamento": "Sistema de acceso\nWATCHMAN",
+    "evento": "El dispositivo puede desprenderse durante el procedimiento, causando complicaciones vasculares graves.",
+    "url": "https://www.fda.gov/medical-devices/medical-device-recalls/...",
+    "fecha_publicada": "2024-08-05T16:00:00Z"
+  }
+]
+```
+
+## Error Handling
+
+<Warning>
+The FDA scraper includes robust error handling:
+- HTTP retries (up to 2 attempts)
+- Multiple fallback strategies for data extraction
+- Graceful degradation when AI/translation unavailable
+</Warning>
+
+```python
+try:
+    soup = _get(url)
+    # ... extraction logic
+except Exception as e:
+    logger.error("FDA detalle falló %s: %s", url, e, exc_info=True)
+    return None
+```
+
+## Related Pages
+
+<CardGroup cols={3}>
+  <Card title="DIGEMID" icon="flag-pe" href="/regulatory/digemid">
+    Peruvian regulatory authority
+  </Card>
+  <Card title="EMA" icon="flag-eu" href="/regulatory/ema">
+    European Medicines Agency
+  </Card>
+  <Card title="VigiAccess" icon="globe" href="/regulatory/vigiaccess">
+    WHO global database
+  </Card>
+</CardGroup>

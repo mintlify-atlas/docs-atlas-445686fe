@@ -1,0 +1,391 @@
+---
+title: 'User Management'
+description: 'Manage users, roles, permissions, and employee records in VIGIA'
+icon: 'users'
+---
+
+## Overview
+
+VIGIA provides comprehensive user management capabilities including authentication, role-based access control (RBAC), and integration with employee records. Users can be managed at both the master (SaaS) level and individual tenant level.
+
+## User Model
+
+Users in VIGIA are defined by the `User` model located at `backend/app/models/user.py:17-80`:
+
+### Core Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | Integer | Primary key |
+| `username` | String(64) | Unique username (optional) |
+| `email` | String(255) | Unique email address (required) |
+| `hashed_password` | String(255) | Bcrypt hashed password |
+| `is_active` | Boolean | Account activation status |
+| `roles` | Array[String] | PostgreSQL array of role names |
+| `custom_permissions` | JSON | Override permissions per user |
+| `empleado_id` | Integer | Foreign key to employee record |
+| `created_at` | DateTime | Account creation timestamp |
+| `updated_at` | DateTime | Last modification timestamp |
+
+### Example User Record
+
+```python
+user = User(
+    username="admin@empresa.com",
+    email="admin@empresa.com",
+    hashed_password=hash_password("secure_password"),
+    is_active=True,
+    roles=["admin", "responsable_fv"],
+    empleado_id=42
+)
+```
+
+## Authentication
+
+### Login Flow
+
+Authentication is handled through `backend/app/routers/auth.py:169-223`:
+
+1. **Client submits credentials** via OAuth2 password flow to `/auth/login`
+2. **System validates** username/email and password
+3. **Checks user status** (active, has roles)
+4. **Generates JWT token** with claims:
+   - `sub`: User ID (string)
+   - `uid`: User ID (integer)
+   - `username`: Username
+   - `email`: Email address
+   - `role`: Primary role
+   - `roles`: Array of all roles
+   - `tenant`: Tenant subdomain or "legacy"
+   - `trace`: Request trace ID
+
+### Multi-Tenant Authentication
+
+VIGIA supports multi-tenant authentication via the `X-Tenant` header:
+
+```bash
+curl -X POST http://api.vigia.com/api/v1/auth/login \
+  -H "X-Tenant: empresa1" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=admin@empresa.com&password=secret"
+```
+
+**Tenant Resolution Order** (from `backend/app/routers/auth.py:128-146`):
+1. `X-Tenant` header (highest priority)
+2. `tenant` claim in JWT token
+3. "legacy" mode (single-tenant)
+
+### Password Security
+
+Passwords are hashed using bcrypt via passlib (`backend/app/core/security.py:1-16`):
+
+```python
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+```
+
+## Roles and Permissions
+
+### Available Roles
+
+VIGIA defines system roles in `backend/app/models/roles.py:27-34`:
+
+```python
+class RoleEnum(str, Enum):
+    admin = "admin"
+    qf = "qf"  # Qualified Person (Químico Farmacéutico)
+    responsable_fv = "responsable_fv"  # Pharmacovigilance Manager
+    qa = "qa"  # Quality Assurance
+    direccion_tecnica = "direccion_tecnica"  # Technical Director
+    legal = "legal"
+    soporte = "soporte"  # Support
+```
+
+### Role Model
+
+Roles are stored in the `roles` table with the following structure (`backend/app/models/roles.py:60-117`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | Integer | Primary key |
+| `name` | String(64) | Unique role name |
+| `description` | String(255) | Human-readable description |
+| `active` | Boolean | Role activation status |
+| `permissions` | JSONB | Module-level permissions |
+| `is_system` | Boolean | System role (cannot delete) |
+
+### Permission Structure
+
+Permissions are stored as JSONB with module-level granularity:
+
+```json
+{
+  "icsr": {
+    "view": true,
+    "edit": true,
+    "delete": false,
+    "export": true
+  },
+  "surveillance": {
+    "view": true,
+    "edit": false
+  },
+  "admin": {
+    "users": true,
+    "config": false
+  }
+}
+```
+
+### Role Assignment
+
+Users can have roles assigned via two mechanisms:
+
+1. **Array column** (`users.roles`): PostgreSQL VARCHAR[] array
+2. **Many-to-many relationship** (`user_roles` table): Traditional M2M join
+
+The `roles_names()` method (`backend/app/models/user.py:66-76`) provides unified access:
+
+```python
+def roles_names(self) -> List[str]:
+    # 1) Try M2M relationship first
+    try:
+        if self.roles_rel:
+            out = [r.name for r in self.roles_rel if getattr(r, "name", None)]
+            if out:
+                return out
+    except Exception:
+        pass
+    # 2) Fallback to array column
+    return [r for r in (self.roles or []) if isinstance(r, str) and r.strip()]
+```
+
+## User Management Operations
+
+### Creating Users
+
+Users are created during tenant provisioning (`backend/app/services/tenants.py:98-153`):
+
+```python
+def _create_tenant_admin_user(cliente: ClienteSaaS, password_plano: str) -> None:
+    # Create admin role if needed
+    admin_role = db_tenant.query(Role).filter(
+        Role.name == RoleEnum.admin.value
+    ).one_or_none()
+    
+    if not admin_role:
+        admin_role = Role(name=RoleEnum.admin.value)
+        db_tenant.add(admin_role)
+        db_tenant.flush()
+    
+    # Create user
+    user = User(
+        username=cliente.correo_acceso,
+        email=cliente.correo_acceso,
+        hashed_password=get_password_hash(password_plano),
+        is_active=True,
+        roles=[RoleEnum.admin.value]
+    )
+    
+    db_tenant.add(user)
+    db_tenant.commit()
+```
+
+### Password Reset
+
+VIGIA provides two password reset endpoints:
+
+#### 1. User Self-Service (`/auth/change-password`)
+
+Requires current password verification (`backend/app/routers/auth.py:260-282`):
+
+```bash
+curl -X POST http://api.vigia.com/api/v1/auth/change-password \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "current_password": "old_pass",
+    "new_password": "new_secure_pass"
+  }'
+```
+
+#### 2. Admin Reset (`/admin/clientes/{id}/reset-password`)
+
+Allows administrators to reset user passwords (`backend/app/routers/admin_clientes.py:146-208`):
+
+**Manual Mode** (admin provides password):
+```json
+{
+  "mode": "manual",
+  "new_password": "temporary_password_123"
+}
+```
+
+**Auto Mode** (system generates temporary password):
+```json
+{
+  "mode": "auto"
+}
+```
+
+Response includes temporary password (auto mode only):
+```json
+{
+  "ok": true,
+  "user_email": "admin@empresa.com",
+  "temp_password": "xK9mP2nQ7wR5"
+}
+```
+
+### Activation and Deactivation
+
+Toggle user status by updating `is_active`:
+
+```python
+user = db.query(User).filter(User.id == user_id).first()
+user.is_active = not user.is_active
+db.commit()
+```
+
+Inactive users receive 403 Forbidden on login attempts (`backend/app/routers/auth.py:186-187`).
+
+## Employee Integration
+
+Users can be linked to employee records via `empleado_id` foreign key.
+
+### Employee Model
+
+The `Empleado` model (`backend/app/models/empleado.py:5-72`) stores comprehensive HR data:
+
+**Identity**:
+- `tipo_doc`, `dni`: Document type and number
+- `ape_pat`, `ape_mat`, `nombres`: Full name components
+- `sexo`, `nacionalidad`, `f_nacimiento`: Personal details
+
+**Employment**:
+- `estado`: Employment status (activo, inactivo, cesado)
+- `cargo`: Job title
+- `area`, `centro_costo`: Department and cost center
+- `f_ingreso_rxh`, `f_ingreso_planilla`: Start dates
+- `f_cese`, `cese_motivo`: Termination details
+
+**Contact**:
+- `email`, `tel_personal`: Contact information
+- `direccion`, `distrito`: Address
+- `contacto_emerg`, `tel_emerg`: Emergency contact
+
+### User-Employee Relationship
+
+The `User` model defines a relationship to `Empleado` (`backend/app/models/user.py:49-53`):
+
+```python
+empleado_id = Column(
+    Integer,
+    ForeignKey("rrhh_empleado.id", ondelete="SET NULL"),
+    nullable=True,
+)
+empleado = relationship(
+    "Empleado",
+    lazy="joined",
+    foreign_keys=[empleado_id],
+)
+```
+
+### Benefits of Employee Linking
+
+1. **Unified HR data**: Single source of truth for employee information
+2. **Automatic deactivation**: When employee status changes to "cesado", user account can be automatically deactivated
+3. **Audit trails**: Link user actions to specific employees
+4. **Reporting**: Generate reports by department, role, or employee status
+
+## Token Configuration
+
+JWT tokens are configured via environment variables (`backend/app/core/config.py:70-74`):
+
+```bash
+# .env configuration
+SECRET_KEY=your-256-bit-secret-key-here
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480  # 8 hours
+```
+
+### Token Validation
+
+Tokens are validated on protected endpoints via `oauth2_scheme` dependency:
+
+```python
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+@router.get("/me")
+def me(token: str = Depends(oauth2_scheme)):
+    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    # ...
+```
+
+## Security Best Practices
+
+### Password Requirements
+
+- **Minimum length**: 6 characters (enforced at `backend/app/routers/auth.py:268`)
+- **Hashing**: Bcrypt with automatic salt
+- **Storage**: Never store plaintext passwords
+
+### Token Security
+
+- **Expiration**: Set appropriate `ACCESS_TOKEN_EXPIRE_MINUTES`
+- **Secret rotation**: Rotate `SECRET_KEY` periodically
+- **HTTPS only**: Never transmit tokens over HTTP
+- **Trace IDs**: Every auth request logs a trace ID for auditing
+
+### Multi-Tenant Isolation
+
+- **Database separation**: Each tenant has isolated database
+- **Token binding**: JWT includes tenant claim
+- **Header validation**: `X-Tenant` header prevents cross-tenant access
+- **Session isolation**: Database connections use tenant-specific connection strings
+
+## Monitoring and Auditing
+
+Authentication events are logged with trace IDs (`backend/app/routers/auth.py:65-67`):
+
+```python
+def _trace_id(request: Request) -> str:
+    rid = request.headers.get("x-request-id") or request.headers.get("x-trace-id")
+    return rid.strip() if rid and rid.strip() else uuid.uuid4().hex[:10]
+```
+
+Key events logged:
+- Login attempts (success/failure)
+- Password changes
+- User lookups
+- Database selection
+- Password verifications
+
+## API Endpoints
+
+### Authentication
+
+- `POST /api/v1/auth/login` - User login
+- `GET /api/v1/auth/me` - Get current user info
+- `GET /api/v1/auth/whoami` - Get authenticated user details
+- `POST /api/v1/auth/change-password` - Change own password
+- `POST /api/v1/auth/reset-password` - Admin password reset
+
+### User Management
+
+User CRUD operations are handled at the tenant level. See the roles and admin endpoints for management capabilities.
+
+## Related Documentation
+
+- [Multi-Tenant Architecture](/admin/multi-tenant)
+- [Configuration](/admin/configuration)
+- [Backup & Restore](/admin/backup-restore)

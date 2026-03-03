@@ -1,0 +1,362 @@
+---
+title: Products API Overview
+description: Manage pharmaceutical products, including registration details, technical datasheets, and bulk import operations
+---
+
+The Products API provides comprehensive endpoints for managing pharmaceutical product catalogs in the VIGIA pharmacovigilance platform.
+
+## Base Path
+
+```
+/api/v1/products
+```
+
+## Authentication
+
+All endpoints require authentication via the `get_current_user` dependency. Include your JWT token in the `Authorization` header:
+
+```bash
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+## Key Features
+
+- **CRUD Operations**: Create, read, update, and delete product records
+- **Advanced Search**: Text-based search across multiple fields with filtering
+- **Bulk Import**: Import/update multiple products via JSON payload
+- **Technical Datasheets**: Upload and manage PDF technical documentation
+- **Audit Trail**: All product operations are automatically audited
+
+## Product Model
+
+Products include the following key fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Unique product identifier |
+| `producto` | string | Product name |
+| `ifa` | string | Active pharmaceutical ingredient (IFA) |
+| `forma_farmaceutica` | string | Pharmaceutical form |
+| `presentacion_farmaceutica` | string | Pharmaceutical presentation |
+| `via` | string | Route of administration |
+| `estado_registro` | string | Registration status |
+| `numero_registro` | string | Sanitary registration number (unique identifier) |
+| `fecha_venc_registro` | date | Registration expiration date |
+| `fecha_primer_registro` | date | First registration date |
+| `comercializa` | boolean | Currently marketed |
+| `pais_comercializacion` | string | Marketing country |
+| `laboratorio_pais` | string | Laboratory/country |
+| `ficha_tecnica_url` | string | URL to technical datasheet PDF |
+| `comentarios` | string | Additional comments |
+
+---
+
+## Endpoints
+
+### Create Product
+
+<Card title="POST /products/" icon="plus">
+  Create a new product record.
+</Card>
+
+**Request Body:**
+
+```json
+{
+  "producto": "Paracetamol 500mg",
+  "ifa": "Paracetamol",
+  "forma_farmaceutica": "Tableta",
+  "numero_registro": "RS-12345",
+  "estado_registro": "Vigente",
+  "comercializa": true
+}
+```
+
+**Response:** `201 Created`
+
+```json
+{
+  "id": 123,
+  "producto": "Paracetamol 500mg",
+  "ifa": "Paracetamol",
+  "numero_registro": "RS-12345",
+  "created_at": "2026-03-03T10:30:00Z",
+  "updated_at": "2026-03-03T10:30:00Z"
+}
+```
+
+---
+
+### List Products
+
+<Card title="GET /products/" icon="list">
+  Retrieve a paginated list of products with optional filtering and sorting.
+</Card>
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | "" | Search text (searches producto, ifa, numero_registro) |
+| `estado` | string | "all" | Filter by registration status |
+| `comercializa` | string | "all" | Filter by marketing status ("si", "no", "all") |
+| `sort` | string | "producto" | Sort field (producto, ifa, id, created_at, numero_registro) |
+| `order` | string | "asc" | Sort order (asc, desc) |
+| `offset` | integer | 0 | Pagination offset |
+| `limit` | integer | 50 | Results per page (max 200) |
+| `numero_registro` | string | null | Exact match filter by registration number |
+
+**Example Request:**
+
+```bash
+GET /api/v1/products/?q=paracetamol&comercializa=si&limit=20&sort=created_at&order=desc
+```
+
+**Response:** `200 OK`
+
+```json
+{
+  "items": [
+    {
+      "id": 123,
+      "producto": "Paracetamol 500mg",
+      "ifa": "Paracetamol",
+      "numero_registro": "RS-12345",
+      "comercializa": true
+    }
+  ],
+  "total": 45,
+  "offset": 0,
+  "limit": 20
+}
+```
+
+---
+
+### Search Products (Autocomplete)
+
+<Card title="GET /products/search" icon="magnifying-glass">
+  Fast search endpoint optimized for autocomplete functionality.
+</Card>
+
+**Query Parameters:**
+
+- `term` or `q` (required): Search term (min 2 characters)
+- `limit` (optional, default: 8, max: 50): Maximum results
+
+**Example:**
+
+```bash
+GET /api/v1/products/search?term=para&limit=5
+```
+
+**Response:**
+
+```json
+{
+  "items": [
+    {
+      "id": 123,
+      "producto": "Paracetamol 500mg",
+      "ifa": "Paracetamol",
+      "numero_registro": "RS-12345"
+    }
+  ],
+  "total": 3,
+  "limit": 5
+}
+```
+
+---
+
+### Get Product by ID
+
+<Card title="GET /products/{product_id}" icon="file">
+  Retrieve a single product by its ID.
+</Card>
+
+**Response:** `200 OK` or `404 Not Found`
+
+---
+
+### Update Product
+
+<Card title="PUT /products/{product_id}" icon="pen">
+  Update an existing product. Only provided fields will be updated.
+</Card>
+
+**Request Body:**
+
+```json
+{
+  "estado_registro": "Vencido",
+  "comercializa": false
+}
+```
+
+**Response:** `200 OK`
+
+The update operation automatically tracks changes and stores them in the audit log with a diff of modified fields.
+
+---
+
+### Delete Product
+
+<Card title="DELETE /products/{product_id}" icon="trash">
+  Permanently delete a product record.
+</Card>
+
+**Response:** `200 OK`
+
+```json
+{
+  "ok": true
+}
+```
+
+---
+
+### Lookup by Registration Number
+
+<Card title="GET /products/by-registro" icon="search">
+  Find a product by its sanitary registration number.
+</Card>
+
+**Query Parameters:**
+
+- `registro` or `numero_registro`: Registration number (exact match)
+
+**Example:**
+
+```bash
+GET /api/v1/products/by-registro?registro=RS-12345
+```
+
+**Alternative Path-based Lookup:**
+
+```bash
+GET /api/v1/products/by-registro/RS-12345
+```
+
+---
+
+### Bulk Import
+
+<Card title="POST /products/bulk" icon="upload">
+  Create or update multiple products in a single operation.
+</Card>
+
+**Upsert Logic:** Products are matched by `numero_registro`. If a match is found, the product is updated; otherwise, a new product is created.
+
+**Request Body:**
+
+```json
+{
+  "items": [
+    {
+      "producto": "Ibuprofeno 400mg",
+      "ifa": "Ibuprofeno",
+      "numero_registro": "RS-67890",
+      "comercializa": true
+    },
+    {
+      "producto": "Amoxicilina 500mg",
+      "ifa": "Amoxicilina",
+      "numero_registro": "RS-11111"
+    }
+  ]
+}
+```
+
+**Response:** `200 OK`
+
+```json
+{
+  "created": 15,
+  "updated": 8,
+  "skipped": 2,
+  "errors": [
+    {
+      "index": 5,
+      "numero_registro": "RS-INVALID",
+      "error": "Invalid format"
+    }
+  ],
+  "total_processed": 25
+}
+```
+
+**Requirements:**
+- Each item must include at minimum: `producto` and `numero_registro`
+- Unknown fields are ignored
+- Invalid items are skipped and reported in `errors`
+
+---
+
+## Technical Datasheet Management
+
+### Upload Technical Datasheet
+
+<Card title="POST /products/{product_id}/ficha-tecnica" icon="file-arrow-up">
+  Upload a PDF technical datasheet for a product.
+</Card>
+
+**Request:** Multipart form-data with PDF file
+
+**Response:** `201 Created`
+
+```json
+{
+  "url": "/media/products/123/ficha-20260303-103045.pdf",
+  "abs_url": "http://api.example.com/media/products/123/ficha-20260303-103045.pdf"
+}
+```
+
+---
+
+### Get Technical Datasheet URL
+
+<Card title="GET /products/{product_id}/ficha-tecnica" icon="file-check">
+  Retrieve the URL of the product's technical datasheet.
+</Card>
+
+**Response:** `200 OK` or `404 Not Found`
+
+```json
+{
+  "url": "/media/products/123/ficha-20260303-103045.pdf",
+  "abs_url": "http://api.example.com/media/products/123/ficha-20260303-103045.pdf"
+}
+```
+
+---
+
+### Delete Technical Datasheet
+
+<Card title="DELETE /products/{product_id}/ficha-tecnica" icon="file-xmark">
+  Remove the technical datasheet reference and delete the physical file.
+</Card>
+
+**Response:** `200 OK`
+
+```json
+{
+  "ok": true
+}
+```
+
+---
+
+## Audit Trail
+
+All product operations are automatically audited with the following actions:
+
+- `PRODUCT_CREATE` - Product creation
+- `PRODUCT_LIST` - Product listing
+- `PRODUCT_UPDATE` - Product updates (includes change diff)
+- `PRODUCT_DELETE` - Product deletion
+- `PRODUCT_BULK_IMPORT` - Bulk import operations
+- `PRODUCT_FICHA_UPLOAD` - Technical datasheet upload
+- `PRODUCT_FICHA_DELETE` - Technical datasheet deletion
+
+Audit logs include user information, timestamps, and detailed change history.

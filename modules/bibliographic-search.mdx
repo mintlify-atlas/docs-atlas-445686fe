@@ -1,0 +1,638 @@
+---
+title: 'Bibliographic Search Module'
+description: 'Integrated search across PubMed, SciELO, PMC, and LILACS for pharmacovigilance literature review'
+icon: 'magnifying-glass'
+---
+
+## Overview
+
+The Bibliographic Search module aggregates scientific literature from multiple sources (PubMed Central, SciELO, LILACS, FDA) to support pharmacovigilance signal detection, safety profile analysis, and regulatory submissions.
+
+## Supported Databases
+
+<CardGroup cols={2}>
+  <Card title="LILACS" icon="book-medical">
+    **Latin American & Caribbean Health Sciences**
+    
+    Coverage: 1982-present
+    
+    Focus: Regional pharmacovigilance data
+    
+    API: BVS iAHx XML
+  </Card>
+  
+  <Card title="SciELO" icon="flask">
+    **Scientific Electronic Library Online**
+    
+    Coverage: 1997-present
+    
+    Focus: Open-access journals (PT, BR, CL, PE)
+    
+    API: OAI-PMH (Dublin Core)
+  </Card>
+  
+  <Card title="PubMed Central" icon="microscope">
+    **US National Library of Medicine**
+    
+    Coverage: 1900s-present
+    
+    Focus: Global biomedical literature
+    
+    API: PMC E-utilities
+  </Card>
+  
+  <Card title="FDA" icon="clipboard-check">
+    **US Food & Drug Administration**
+    
+    Coverage: Regulatory documents
+    
+    Focus: Drug approvals, safety alerts
+    
+    API: FDA.gov site search
+  </Card>
+</CardGroup>
+
+## Architecture
+
+<Steps>
+  <Step title="Query Construction">
+    Build search terms from product name + IFA (active ingredient)
+  </Step>
+  <Step title="Parallel Execution">
+    Query all sources concurrently (asyncio)
+  </Step>
+  <Step title="Result Normalization">
+    Standardize fields: title, authors, year, source, link, database
+  </Step>
+  <Step title="Deduplication">
+    Remove identical records across sources
+  </Step>
+  <Step title="Relevance Filtering">
+    Apply local regex/keyword filters
+  </Step>
+</Steps>
+
+## LILACS Search
+
+### API Integration
+
+LILACS uses the BVS iAHx search interface with XML output:
+
+```python LILACS Search (backend/app/services/biblio_sources.py:48)
+from app.services.biblio_sources import search_lilacs
+
+results = search_lilacs(
+    query="ibuprofeno AND urticaria",
+    lang="es",
+    start=0,
+    count=20,
+    timeout=20.0
+)
+
+# Response:
+[
+    {
+        "title": "Reacciones adversas cutáneas por ibuprofeno en población pediátrica",
+        "authors": ["García M", "López J", "Rodríguez A"],
+        "year": "2024",
+        "source": "Rev Peru Med Exp Salud Publica",
+        "link": "https://lilacs.bvsalud.org/resource/123456",
+        "database": "LILACS"
+    }
+]
+```
+
+**Features:**
+- Multi-language support (es, en, pt)
+- Automatic retry with exponential backoff (0s, 1s, 2s)
+- Custom User-Agent header (`VIGIA/0.1`)
+- XML parsing with namespace handling
+- Timeout protection (default 20s)
+
+<Note>
+LILACS returns results in the requested language. Use `lang="es"` for Spanish-speaking regions to get properly localized abstracts.
+</Note>
+
+### Advanced Query Syntax
+
+```python LILACS Query Examples
+# Simple term
+search_lilacs("paracetamol")
+
+# Boolean operators
+search_lilacs("ibuprofeno AND (urticaria OR exantema)")
+
+# Phrase search
+search_lilacs('"reacción adversa medicamentosa"')
+
+# Field-specific (title, author, subject)
+search_lilacs("ti:farmacovigilancia")
+
+# Date range (not directly supported, use filter parameter)
+# params = {"filter": "year_cluster:[2020 TO 2025]"}
+```
+
+## SciELO OAI-PMH
+
+### Harvesting Protocol
+
+SciELO provides OAI-PMH endpoints for bulk harvesting:
+
+```python SciELO Harvest (backend/app/services/biblio_sources.py:126)
+from app.services.biblio_sources import harvest_scielo_oai
+
+# National nodes
+BRAZIL = "https://www.scielo.br/oai/scielo-oai.php"
+PERU = "https://scielo.org.pe/oai/scielo-oai.php"
+CHILE = "https://scielo.conicyt.cl/oai/scielo-oai.php"
+GLOBAL = "https://search.scielo.org/oai/scielo-oai.php"  # Fallback
+
+results = harvest_scielo_oai(
+    base_url=PERU,
+    from_date="2020-01-01",
+    until_date="2025-03-31",
+    max_records=200,
+    timeout=30.0
+)
+
+# Response:
+[
+    {
+        "title": "Farmacovigilancia en el Perú: situación actual y perspectivas",
+        "authors": ["Ministerio de Salud"],
+        "year": "2023",
+        "journal": "Rev Peru Med Exp Salud Publica",
+        "links": ["https://doi.org/10.17843/rpmesp.2023.401.12345"],
+        "subjects": ["Farmacovigilancia", "Perú", "Eventos adversos"],
+        "description": "La farmacovigilancia en el Perú ha evolucionado...",
+        "database": "SciELO (OAI-PMH)"
+    }
+]
+```
+
+**Metadata Format: Dublin Core (oai_dc)**
+
+<Tabs>
+  <Tab title="Standard Fields">
+```xml OAI-PMH Record Structure
+<record>
+  <metadata>
+    <oai_dc:dc>
+      <dc:title>Article Title</dc:title>
+      <dc:creator>Author Name</dc:creator>
+      <dc:date>2023-05-15</dc:date>
+      <dc:identifier>https://doi.org/10.1234/journal.v1.123</dc:identifier>
+      <dc:source>Journal Name, v.1 n.2</dc:source>
+      <dc:subject>Pharmacovigilance</dc:subject>
+      <dc:description>Abstract text...</dc:description>
+      <dc:language>es</dc:language>
+    </oai_dc:dc>
+  </metadata>
+</record>
+```
+  </Tab>
+  
+  <Tab title="Namespace Handling">
+```python Namespace-Aware Parsing (backend/app/services/biblio_sources.py:149)
+ns = {
+    "oai": "http://www.openarchives.org/OAI/2.0/",
+    "oai_dc": "http://www.openarchives.org/OAI/2.0/oai_dc/",
+    "dc": "http://purl.org/dc/elements/1.1/",
+}
+
+# Correct XPath with namespaces
+titles = dc_el.findall("./dc:title", ns)
+authors = dc_el.findall("./dc:creator", ns)
+dates = dc_el.findall("./dc:date", ns)
+
+# Incorrect (will fail):
+# titles = dc_el.findall(".//title")  # Missing namespace
+```
+  </Tab>
+</Tabs>
+
+### Resumption Tokens
+
+OAI-PMH uses resumption tokens for pagination:
+
+```python Automatic Pagination (backend/app/services/biblio_sources.py:217)
+# Initial request
+params = {"verb": "ListRecords", "metadataPrefix": "oai_dc"}
+
+# Subsequent requests use token
+token = root.find(".//oai:resumptionToken", ns)
+if token is not None and token.text:
+    params = {"verb": "ListRecords", "resumptionToken": token.text}
+else:
+    break  # No more results
+```
+
+<Warning>
+SciELO regional nodes (Peru, Chile) sometimes return 404 errors. The system automatically retries with the global endpoint (`search.scielo.org`) as fallback.
+</Warning>
+
+## Quick Search with Filters
+
+The `quick_search()` function combines LILACS and SciELO with local filtering:
+
+```python Quick Search API (backend/app/services/biblio_sources.py:280)
+from app.services.biblio_sources import quick_search
+
+results = quick_search(
+    query="ibuprofeno urticaria",
+    scielo_oai_url="https://www.scielo.br/oai/scielo-oai.php",
+    lang="es",
+    limit_each=20,
+    timeout=30.0,
+    skip_lilacs=False,
+    years_back=5,  # Last 5 years only
+    fields=["title", "subjects", "description"],
+    regex=False  # Use OR/AND logic, not regex
+)
+
+# Response:
+{
+    "lilacs": [<20 results>],
+    "scielo": [<20 results>]
+}
+```
+
+### Filter Logic
+
+<AccordionGroup>
+  <Accordion title="Boolean Search (default)" icon="filter">
+```python Boolean Query Syntax
+# OR operator (pipe)
+"urticaria | rash | exantema"  # Matches any term
+
+# AND operator (implicit by space)
+"ibuprofeno urticaria"  # Matches both terms
+
+# Combined
+"paracetamol (hepatotoxicidad | liver)"
+# → Matches: "paracetamol" AND ("hepatotoxicidad" OR "liver")
+```
+
+**Matching Process:**
+1. Split query by `|` (OR parts)
+2. Split each OR part by space (AND tokens)
+3. Normalize: remove accents, case-fold
+4. Check if all AND tokens appear in any field
+5. Return first matching OR part
+  </Accordion>
+  
+  <Accordion title="Regex Search" icon="code">
+```python Regex Query Mode
+results = quick_search(
+    query=r"\b(urticaria|exantema)\s+(generalizada?|severa?)",
+    regex=True,
+    fields=["title", "description"]
+)
+
+# Matches:
+# - "urticaria generalizada"
+# - "exantema severo"
+# But NOT:
+# - "urticaria leve" (missing second group)
+```
+
+**Accent Handling:**
+
+Query is normalized (`ó` → `o`, `ñ` → `n`), fields are normalized before matching, and search is case-insensitive by default (`re.IGNORECASE`).
+  </Accordion>
+  
+  <Accordion title="Field Selection" icon="list">
+```python
+# Available Fields
+fields = [
+    "title",         # Article title
+    "authors",       # Author list
+    "year",          # Publication year
+    "journal",       # Journal name (SciELO)
+    "source",        # Source citation (LILACS)
+    "subjects",      # Keywords/MeSH terms
+    "description",   # Abstract
+    "links"          # DOI, URLs
+]
+
+# Example: Search only in titles and subjects
+results = quick_search(
+    query="farmacovigilancia",
+    fields=["title", "subjects"]
+)
+```
+  </Accordion>
+</AccordionGroup>
+
+## Aggregated Search API
+
+The main search endpoint queries all sources in parallel:
+
+```python Unified Search (GET /api/v1/biblio/search)
+GET /api/v1/biblio/search?name=Ibuprofeno&ifa=ibuprofeno&range_from=2020-01-01&range_to=2025-12-31
+
+# Response:
+{
+  "term": "Ibuprofeno ibuprofeno",  # Combined search term
+  "rangeFrom": "2020-01-01",
+  "rangeTo": "2025-12-31",
+  "total": 87,
+  "items": [
+    {"title": "...", "database": "scielo", ...},
+    {"title": "...", "database": "pmc", ...},
+    {"title": "...", "database": "lilacs", ...},
+    {"title": "...", "database": "fda", ...}
+  ],
+  "traces": [
+    {
+      "collection": "scielo",
+      "url": "https://search.scielo.org/?q=Ibuprofeno...",
+      "note": "SciELO search",
+      "count": 23
+    },
+    {
+      "collection": "pmc",
+      "url": "https://pmc.ncbi.nlm.nih.gov/search/?term=Ibuprofeno...",
+      "note": "PMC search",
+      "count": 45
+    },
+    {
+      "collection": "lilacs",
+      "url": "https://pesquisa.bvsalud.org/portal/?q=Ibuprofeno...",
+      "note": "BVS / LILACS",
+      "count": 12
+    },
+    {
+      "collection": "fda",
+      "url": "https://www.fda.gov/search?s=Ibuprofeno",
+      "note": "FDA site search (trace UI)",
+      "count": 7
+    }
+  ],
+  "usedAttempts": [
+    {"engine": "scielo", "name": "Ibuprofeno", "ifa": "ibuprofeno", "search_term": "Ibuprofeno ibuprofeno"},
+    {"engine": "pmc", "name": "Ibuprofeno", "ifa": "ibuprofeno", "search_term": "Ibuprofeno ibuprofeno"},
+    {"engine": "lilacs", "name": "Ibuprofeno", "ifa": "ibuprofeno", "search_term": "Ibuprofeno ibuprofeno"},
+    {"engine": "fda", "name": "Ibuprofeno", "ifa": "ibuprofeno", "search_term": "Ibuprofeno ibuprofeno"}
+  ]
+}
+```
+
+**Query Parameters:**
+
+<ParamField path="name" type="string">
+  Commercial product name
+</ParamField>
+
+<ParamField path="ifa" type="string">
+  Active ingredient (IFA - International Nonproprietary Name)
+</ParamField>
+
+<ParamField path="term" type="string">
+  Direct search term (overrides name+ifa)
+</ParamField>
+
+<ParamField path="range_from" type="string">
+  Start date (YYYY-MM-DD)
+</ParamField>
+
+<ParamField path="range_to" type="string">
+  End date (YYYY-MM-DD)
+</ParamField>
+
+<ParamField path="lang" type="string" default="es">
+  Language preference (es, en, pt)
+</ParamField>
+
+<ParamField path="max_results_fda" type="integer" default="10">
+  Max FDA results (1-25)
+</ParamField>
+
+<ParamField path="max_pages_lilacs" type="integer" default="2">
+  Max LILACS pages (1-20)
+</ParamField>
+
+<ParamField path="page_size_lilacs" type="integer" default="50">
+  Results per LILACS page (1-200)
+</ParamField>
+
+<ParamField path="translate_lilacs" type="boolean" default="true">
+  Auto-translate LILACS results
+</ParamField>
+
+## Error Handling
+
+### HTTP Status Codes
+
+<Tabs>
+  <Tab title="404 Not Found">
+```python SciELO Regional Node Fallback
+# Regional node returns 404
+try:
+    results = harvest_scielo_oai("https://scielo.org.pe/oai/scielo-oai.php")
+except HTTPStatusError as e:
+    if e.response.status_code == 404:
+        # Retry with global endpoint
+        results = harvest_scielo_oai("https://search.scielo.org/oai/scielo-oai.php")
+```
+  </Tab>
+  
+  <Tab title="403 Forbidden">
+```python Rate Limiting
+# SciELO/LILACS may block excessive requests
+# Implement exponential backoff
+
+backoff = [0, 1.0, 2.0, 4.0]  # seconds
+for wait in backoff:
+    time.sleep(wait)
+    try:
+        results = search_lilacs(query)
+        break
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            continue  # Retry
+        else:
+            raise  # Other error
+```
+  </Tab>
+  
+  <Tab title="Timeout">
+```python Request Timeouts
+# All HTTP clients use configurable timeout
+HTTP_TIMEOUT = httpx.Timeout(
+    45.0,      # Total request timeout
+    connect=20.0  # Connection establishment timeout
+)
+
+async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+    response = await client.get(url)
+```
+  </Tab>
+</Tabs>
+
+### Retry Strategy
+
+```python Exponential Backoff (backend/app/services/biblio_sources.py:72)
+backoff = [0, 1.0, 2.0]  # Wait times in seconds
+last_err = None
+
+for attempt, wait_s in enumerate(backoff, start=1):
+    try:
+        log.debug("LILACS request attempt %d/%d", attempt, len(backoff))
+        response = client.get(url, params=params)
+        response.raise_for_status()
+        log.info("LILACS HTTP OK (%.1f ms)", elapsed_ms)
+        break
+    except Exception as e:
+        last_err = e
+        log.warning("LILACS attempt %d/%d failed: %s", attempt, len(backoff), e)
+        if attempt < len(backoff):
+            time.sleep(wait_s)
+        else:
+            raise  # Exhausted retries
+```
+
+## Performance Optimization
+
+<CardGroup cols={2}>
+  <Card title="Parallel Execution" icon="bolt">
+```python Concurrent Queries
+import asyncio
+import httpx
+
+async def search_all_sources(query: str):
+    async with httpx.AsyncClient() as client:
+        tasks = [
+            client.get(f"{API_BASE}/scielo/search", params={"q": query}),
+            client.get(f"{API_BASE}/pmc/search", params={"q": query}),
+            client.get(f"{API_BASE}/lilacs/search", params={"q": query}),
+            client.get(f"{API_BASE}/fda/search", params={"q": query}),
+        ]
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+    return responses
+```
+  </Card>
+  
+  <Card title="Result Caching" icon="database">
+```python Redis Cache
+import redis
+import json
+import hashlib
+
+redis_client = redis.Redis()
+
+def cached_search(query: str, **params):
+    # Generate cache key
+    key_data = f"{query}:{json.dumps(params, sort_keys=True)}"
+    cache_key = f"biblio:{hashlib.md5(key_data.encode()).hexdigest()}"
+    
+    # Check cache
+    cached = redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    
+    # Perform search
+    results = search_lilacs(query, **params)
+    
+    # Store in cache (1 hour TTL)
+    redis_client.setex(cache_key, 3600, json.dumps(results))
+    return results
+```
+  </Card>
+  
+  <Card title="Request Batching" icon="layer-group">
+```python Batch Multiple Queries
+def search_batch(queries: list[str], source: str):
+    """Execute multiple queries with connection pooling"""
+    with httpx.Client() as client:
+        results = []
+        for query in queries:
+            try:
+                r = client.get(f"{API_BASE}/{source}/search", params={"q": query})
+                results.append(r.json())
+            except Exception as e:
+                results.append({"error": str(e)})
+    return results
+```
+  </Card>
+  
+  <Card title="Local Filtering" icon="filter">
+```python Pre-Filter Before Network
+# Filter locally instead of server-side for SciELO
+# (Server doesn't support complex queries)
+
+# 1. Fetch broader results
+raw = harvest_scielo_oai(
+    from_date="2020-01-01",
+    max_records=500  # Fetch more
+)
+
+# 2. Filter locally
+filtered = [
+    r for r in raw
+    if _match_local(r, "urticaria", ["title", "description"], regex=False)
+]
+
+# 3. Return top N
+return filtered[:20]
+```
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Check>
+**Do:**
+- Use specific search terms (product + symptom)
+- Specify date ranges to reduce result volume
+- Enable local filtering for precision
+- Cache results for repeated queries
+- Use LILACS for Latin American data
+- Query SciELO regional nodes for local journals
+- Handle 404/403 errors with fallbacks
+- Log search traces for debugging
+</Check>
+
+<Warning>
+**Don't:**
+- Make excessive requests without rate limiting
+- Ignore timeout settings (can block worker)
+- Use overly broad queries ("drug" returns millions)
+- Skip error handling (external APIs are unreliable)
+- Hard-code URLs (use environment config)
+- Fetch all records without pagination
+- Store raw HTML (parse and normalize)
+- Trust external metadata without validation
+</Warning>
+
+## Configuration
+
+```bash Environment Variables
+# API endpoints (override for testing)
+LILACS_BASE="https://pesquisa.bvsalud.org/portal/"
+SCIELO_OAI_GLOBAL="https://search.scielo.org/oai/scielo-oai.php"
+SCIELO_OAI_PERU="https://scielo.org.pe/oai/scielo-oai.php"
+
+# Timeouts
+BIBLIO_TIMEOUT="30"  # seconds
+BIBLIO_CONNECT_TIMEOUT="20"  # seconds
+
+# Rate limiting
+BIBLIO_RETRY_BACKOFF="0,1,2"  # comma-separated seconds
+BIBLIO_MAX_RETRIES="3"
+
+# Cache
+REDIS_URL="redis://localhost:6379/2"  # Database 2 for biblio cache
+BIBLIO_CACHE_TTL="3600"  # 1 hour
+```
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Signal Detection" icon="chart-line" href="/essentials/signals">
+    Using literature search for signal validation
+  </Card>
+  <Card title="IPS Reports" icon="file-medical" href="/essentials/ips">
+    Integrating bibliographic references into safety reports
+  </Card>
+</CardGroup>

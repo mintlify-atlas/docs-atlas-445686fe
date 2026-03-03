@@ -1,0 +1,305 @@
+---
+title: 'DIGEMID Integration'
+description: 'Peruvian regulatory authority integration for product lookups and RAM exports'
+icon: 'flag-pe'
+---
+
+## Overview
+
+VIGIA integrates with DIGEMID (Dirección General de Medicamentos, Insumos y Drogas), Peru's national regulatory authority, to scrape safety alerts, perform product lookups, and generate compliant RAM (Reacción Adversa a Medicamentos) export reports.
+
+## Key Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Alert Scraping" icon="bell">
+    Automatically retrieves safety alerts and modifications from DIGEMID's public portal
+  </Card>
+  <Card title="Product Lookup" icon="magnifying-glass">
+    Searches product registry by name, sanitario number, or active ingredient
+  </Card>
+  <Card title="RAM Export" icon="file-export">
+    Generates PDF reports in official DIGEMID format (Modelo A & B)
+  </Card>
+  <Card title="Data Enrichment" icon="sparkles">
+    Optional AI-powered field enhancement using Gemini
+  </Card>
+</CardGroup>
+
+## Alert Scraping
+
+The DIGEMID scraper extracts safety alerts from the official website and parses structured data including alert numbers, affected products, and reasons for action.
+
+### Data Structure
+
+Each scraped alert contains:
+
+```python
+{
+  "n_alerta": "ALERTA DIGEMID Nº 015-2024",
+  "producto": "Atorvastatina 40mg; Losartán 50mg",
+  "motivo": "Detección de impurezas fuera de especificación",
+  "enlace": "https://www.digemid.minsa.gob.pe/...",
+  "fecha_publicada": datetime(2024, 8, 5, tzinfo=UTC)
+}
+```
+
+### Implementation
+
+The scraper handles multiple layouts:
+
+<CodeGroup>
+```python backend/app/services/digemid.py
+def scrape_digemid_alerts(index_url: str, max_posts: int = 100) -> List[Dict]:
+    """
+    Scrapes DIGEMID alerts from index page.
+    
+    Returns:
+        List of dicts with: n_alerta, producto, motivo, enlace, fecha_publicada
+    """
+    html = _get_html(index_url)
+    soup = _soup(html)
+    
+    # Try table format first
+    rows = _parse_table_index(soup, index_url)
+    if rows:
+        return rows
+    
+    # Otherwise, collect post cards with dates
+    post_pairs = _collect_posts_with_dates_from_index(soup, index_url)
+    
+    out: List[Dict] = []
+    for link, fecha_from_card in post_pairs[:max_posts]:
+        try:
+            detail_html = _get_html(link)
+            data = _parse_detail_page(detail_html, link)
+            
+            if not data.get("fecha_publicada"):
+                data["fecha_publicada"] = fecha_from_card
+            
+            out.append(data)
+        except Exception:
+            continue
+    
+    return out
+```
+
+```python backend/app/routers/source_digemid.py
+@router.get("/sources/digemid")
+async def digemid_search(
+    q: str = Query(..., min_length=2),
+    start: Optional[date] = Query(None),
+    end: Optional[date] = Query(None),
+    max_pages: int = Query(3, ge=1, le=10),
+):
+    items, traces = await anyio.to_thread.run_sync(
+        lambda: search_digemid_alerts(
+            term=q,
+            from_date=start,
+            to_date=end,
+            max_pages=max_pages,
+        )
+    )
+    
+    return {
+        "source": "digemid",
+        "ok": True,
+        "query": q,
+        "hits": len(items),
+        "items": alerts_to_dicts(items),
+        "traces": traces,
+    }
+```
+</CodeGroup>
+
+### Date Parsing
+
+DIGEMID uses Peruvian timezone (`America/Lima`) with Spanish month names:
+
+```python
+TZ_PE = ZoneInfo("America/Lima")
+MESES = {
+    "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
+    "jul": 7, "ago": 8, "set": 9, "sep": 9, "oct": 10, "nov": 11, "dic": 12
+}
+
+def _parse_fecha_publicada_from_card(card: BeautifulSoup) -> Optional[datetime]:
+    text = " ".join(card.get_text(" ").split())
+    m = re.search(r"\b(\d{1,2})\s*(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Set|Sep|Oct|Nov|Dic)\b", text, re.I)
+    if not m:
+        return None
+    day = int(m.group(1))
+    mon = MESES[m.group(2).lower()[:3]]
+    year = _parse_year_from_context(card, text) or datetime.now(TZ_PE).year
+    local_dt = datetime(year, mon, day, 12, 0, 0, tzinfo=TZ_PE)
+    return local_dt.astimezone(timezone.utc)
+```
+
+## RAM Export (ICSR Reports)
+
+VIGIA generates official DIGEMID-compliant PDF reports in two formats:
+
+### Modelo A: Evaluation Report (FRT-OP-017)
+
+Internal causality assessment using the Karch-Lasagna algorithm.
+
+```python
+from app.services.icsr_digemid_export import generate_model_a_evaluacion_pdf
+
+# Generate evaluation report
+pdf_path = generate_model_a_evaluacion_pdf(
+    db=db,
+    icsr_id=12345,
+    out_path="/storage/icsr_exports/modelo_a_evaluacion_12345.pdf"
+)
+```
+
+**Sections included:**
+- Client/Institution reporting
+- Product description (presentation, lot, sanitary registration)
+- Communication description (narrative)
+- Causality analysis (Karch-Lasagna criteria)
+- Conclusions and recommendations
+- Signatures (analyst and operations manager)
+
+### Modelo B: Healthcare Professional Format
+
+Official format for regulatory submission based on DOCX template.
+
+```python
+from app.services.icsr_digemid_export import generate_model_b_prof_salud_pdf
+
+# Generate professional health format
+pdf_path = generate_model_b_prof_salud_pdf(
+    db=db,
+    icsr_id=12345,
+    out_path="/storage/icsr_exports/modelo_b_prof_salud_12345.pdf",
+    extra_ctx={
+        "firma_nombre": "Dr. Juan Pérez",
+        "firma_cargo": "Pharmacovigilance Manager",
+        "firma_img_path": "/path/to/signature.png",
+    }
+)
+```
+
+**Template Processing:**
+1. Reads DOCX template from `backend/app/templates/docs/Formato Profesionales Salud.docx`
+2. Renders with `docxtpl` using Jinja2 context
+3. Converts to PDF using `docx2pdf` (Windows/Mac) or LibreOffice (Linux)
+4. Saves filled DOCX copy to `storage/icsr_exports/ICSR_{id}_ProfSalud_Relleno.docx`
+
+### Context Builder
+
+Both models use a shared context builder:
+
+```python
+from app.services.icsr_export_ctx import build_ctx_for_digemid
+
+ctx = build_ctx_for_digemid(db, icsr_id)
+# Returns dict with:
+# - paciente_iniciales, edad, sexo
+# - producto_sospechoso, presentacion, lote
+# - evento_adverso, fecha_inicio
+# - karch_criterios (temporalidad, conocimiento_previo, etc.)
+# - clasificacion_qf/clasificacion_sys
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Template path (optional, defaults to backend/app/templates/docs/)
+DIGEMID_TEMPLATE=/path/to/Formato\ Profesionales\ Salud.docx
+
+# Export storage directory
+ICSREXPORT_DIR=/path/to/storage/icsr_exports
+
+# AI enhancement (optional)
+GEMINI_API_KEY=your_gemini_key_here
+```
+
+### DOCX to PDF Conversion
+
+The system attempts conversion in this order:
+
+1. **docx2pdf** (requires Microsoft Word on Windows/Mac)
+   - Windows: Initializes COM with `pythoncom.CoInitialize()`
+   - Mac: Uses Word automation
+
+2. **LibreOffice headless** (cross-platform fallback)
+   ```bash
+   soffice --headless --convert-to pdf --outdir /output /input.docx
+   ```
+
+If both fail, the system returns the filled DOCX file.
+
+## API Endpoints
+
+### Search Alerts
+
+```http
+GET /api/v1/sources/digemid?q={query}&start={date}&end={date}&max_pages={int}
+```
+
+**Response:**
+```json
+{
+  "source": "digemid",
+  "ok": true,
+  "query": "atorvastatina",
+  "period": {
+    "from": "2024-01-01",
+    "to": "2024-12-31"
+  },
+  "hits": 3,
+  "items": [
+    {
+      "n_alerta": "ALERTA DIGEMID Nº 015-2024",
+      "producto": "Atorvastatina 40mg",
+      "motivo": "Impurezas detectadas",
+      "enlace": "https://...",
+      "fecha_publicada": "2024-08-05T16:00:00Z"
+    }
+  ],
+  "traces": []
+}
+```
+
+### Export ICSR to DIGEMID Format
+
+```http
+POST /api/v1/icsr/{id}/export/digemid
+Content-Type: application/json
+
+{
+  "modelo": "B",
+  "firma_nombre": "Dr. Juan Pérez",
+  "firma_cargo": "Pharmacovigilance Manager"
+}
+```
+
+**Response:** PDF binary with `Content-Disposition: attachment; filename="modelo_b_prof_salud_12345.pdf"`
+
+## Error Handling
+
+<Warning>
+DIGEMID's website structure changes occasionally. The scraper includes multiple fallback strategies:
+- Table-based index parsing
+- Card-based post extraction
+- PDF text extraction for missing fields
+- AI-powered field enrichment
+</Warning>
+
+## Related Pages
+
+<CardGroup cols={3}>
+  <Card title="FDA Integration" icon="flag-usa" href="/regulatory/fda">
+    US FDA FAERS database access
+  </Card>
+  <Card title="EMA Integration" icon="flag-eu" href="/regulatory/ema">
+    European safety alerts
+  </Card>
+  <Card title="VigiAccess" icon="globe" href="/regulatory/vigiaccess">
+    WHO global database
+  </Card>
+</CardGroup>

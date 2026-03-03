@@ -1,0 +1,495 @@
+---
+title: Causality Assessment
+description: Karch-Lasagna and Ficha Técnica (FT) algorithm workflows for determining product-event relationships
+---
+
+Causality assessment determines the likelihood that the suspected product caused the adverse event. VIGIA supports two algorithms: **Karch-Lasagna** and **Ficha Técnica (FT)**.
+
+## Overview
+
+VIGIA provides:
+
+- **Karch-Lasagna Algorithm**: ICH-endorsed method using 8 criteria
+- **Ficha Técnica (FT) Algorithm**: AI-powered assessment using product technical sheets
+- **Dual-layer Decision**: System suggestion + QF (Químico Farmacéutico) final decision
+- **Classification Output**: Definida, Probable, Posible, Improbable, Condicional, Inclasificable
+
+## Causality Algorithms
+
+<Tabs>
+  <Tab title="Karch-Lasagna">
+    **Karch & Lasagna (1977)** - Modified WHO-UMC criteria
+    
+    ### 8 Evaluation Criteria:
+    
+    1. **Temporalidad** (Temporal relationship)
+       - Event occurred after drug administration
+       - Biologically plausible timeframe
+    
+    2. **Conocimiento Previo** (Prior knowledge)
+       - Event documented in literature or product label
+       - Known adverse reaction pattern
+    
+    3. **Dechallenge** (Drug withdrawal)
+       - Event improved after stopping drug
+       - Clinical recovery observed
+    
+    4. **Rechallenge** (Re-administration)
+       - Event recurred when drug restarted (rarely done)
+       - Strongest evidence of causality
+    
+    5. **Alternativas** (Alternative causes)
+       - Other possible explanations ruled out
+       - Concomitant medications, underlying disease
+    
+    6. **Factores Contribuyentes** (Contributing factors)
+       - Patient factors (age, comorbidities, genetics)
+       - Drug interactions
+    
+    7. **Exploraciones** (Investigations)
+       - Lab tests, imaging, biopsies
+       - Objective evidence of drug effect
+    
+    8. **Plausibilidad** (Biological plausibility)
+       - Known mechanism of action
+       - Pharmacological rationale
+    
+    ### Classification:
+    | Score | Classification | Meaning |
+    |-------|----------------|----------|
+    | ≥9 | Definida | Highly certain causal relationship |
+    | 6-8 | Probable | Likely causal relationship |
+    | 3-5 | Posible | Possible causal relationship |
+    | 1-2 | Improbable | Unlikely causal relationship |
+    | 0 | Condicional | Insufficient data |
+    | N/A | Inclasificable | Cannot be evaluated |
+  </Tab>
+  
+  <Tab title="Ficha Técnica (FT)">
+    **AI-Powered Technical Sheet Assessment**
+    
+    Uses product technical documentation (Ficha Técnica) to determine if the event is:
+    - **Listed** in product label (Section 4.8: Adverse Reactions)
+    - **Contraindicated** in the patient profile
+    - **Documented** in clinical trials or post-marketing data
+    
+    ### Workflow:
+    
+    1. **Upload Ficha Técnica** (PDF)
+    2. **OCR Processing** (extract text from PDF)
+    3. **Section Detection**:
+       - 4.3: Contraindicaciones
+       - 4.4: Advertencias y precauciones
+       - 4.5: Interacciones
+       - 4.8: Reacciones adversas
+       - 5.1: Propiedades farmacodinámicas
+    4. **AI Analysis** (Gemini 1.5 Pro):
+       - Match event to adverse reactions section
+       - Check contraindications vs patient profile
+       - Extract frequency data (muy frecuente, frecuente, poco frecuente)
+    5. **Classification**:
+       - **Definida**: Event listed + high frequency
+       - **Probable**: Event listed + known mechanism
+       - **Posible**: Event type listed (e.g., "skin reactions") but not specific
+       - **Improbable**: Not listed + no plausible mechanism
+  </Tab>
+</Tabs>
+
+## Karch-Lasagna Workflow
+
+<Steps>
+  <Step title="Open Causality Tab">
+    In case detail view, navigate to **Causalidad** > **Karch-Lasagna**
+    
+    **URL**: `/casos/{icsr_id}/causality`
+  </Step>
+  
+  <Step title="Generate AI Suggestion">
+    Click **Suggest** to trigger AI analysis:
+    
+    ```python
+    GET /api/v1/causality/karch-lasagna/suggest/{icsr_id}
+    ```
+    
+    The system:
+    1. Builds payload from case data:
+       ```python
+       build_karch_payload(icsr) → {
+         "paciente": {"edad": 45, "sexo": "F", ...},
+         "producto": {"nombre": "Paracetamol", ...},
+         "evento": {"descripcion": "...", "gravedad": "Grave"},
+         "temporalidad": "Event 2 days after first dose",
+         "dechallenge": "Improved after stopping",
+         ...
+       }
+       ```
+    2. Sends to LLM (Gemini 1.5 Pro)
+    3. Receives structured response:
+       ```json
+       {
+         "criterios": {
+           "temporalidad": {"score": 2, "rationale": "..."},
+           "conocimiento_previo": {"score": 1, "rationale": "..."},
+           "dechallenge": {"score": 1, "rationale": "..."},
+           ...
+         },
+         "score_total": 7,
+         "clasificacion": "Probable"
+       }
+       ```
+  </Step>
+  
+  <Step title="Review System Suggestion">
+    The interface displays:
+    
+    <Card title="System Suggestion: Probable (7 points)">
+      **Criterios Evaluados**:
+      
+      ✅ **Temporalidad** (2 pts): Evento ocurrió 2 días después de iniciar el medicamento. Timeframe biológicamente plausible.
+      
+      ✅ **Conocimiento Previo** (1 pt): Reacción documentada en la literatura para este principio activo.
+      
+      ✅ **Dechallenge** (1 pt): Mejoría clínica tras suspender el medicamento.
+      
+      ⚠️ **Rechallenge** (0 pts): No se realizó re-administración (no indicado).
+      
+      ✅ **Alternativas** (1 pt): Otras causas consideradas pero menos probables.
+      
+      ✅ **Factores Contribuyentes** (1 pt): Paciente con función renal normal, sin interacciones conocidas.
+      
+      ✅ **Exploraciones** (1 pt): Pruebas de laboratorio consistentes con reacción medicamentosa.
+      
+      ⚠️ **Plausibilidad** (0 pts): Mecanismo no completamente establecido.
+      
+      **Total**: 7 puntos → **Probable**
+    </Card>
+  </Step>
+  
+  <Step title="QF Review and Adjustment">
+    As the QF, review each criterion:
+    
+    For each criterion, you can:
+    - **Accept** system score (click ✓)
+    - **Modify** score (0-3 points depending on criterion)
+    - **Edit rationale** (add clinical context)
+    
+    **Example adjustment**:
+    ```
+    Temporalidad:
+    Score (QF): [2 ▼]  (System: 2)
+    Rationale (QF): Acepto evaluación del sistema.
+                     Timeframe consistente con hipersensibilidad tipo I.
+    ```
+    
+    The interface shows **dual columns**:
+    - **Sistema**: AI suggestion
+    - **Q.F.**: Your final decision
+  </Step>
+  
+  <Step title="Calculate Final Score">
+    As you adjust scores, the total updates automatically:
+    
+    ```
+    Sistema: 7 pts → Probable
+    Q.F.:    8 pts → Probable
+    ```
+    
+    **Final Classification** (based on QF score):
+    - Score ≥9: Definida
+    - Score 6-8: Probable  ✓
+    - Score 3-5: Posible
+    - Score 1-2: Improbable
+  </Step>
+  
+  <Step title="Add Global Rationale">
+    Provide overall justification:
+    
+    ```
+    Justificación Global (Q.F.):
+    
+    Clasifico como PROBABLE basado en:
+    1. Temporalidad adecuada (2 días post-inicio)
+    2. Mejoría tras suspensión (dechallenge positivo)
+    3. Reacción conocida para AINE
+    4. Ausencia de causas alternativas más probables
+    
+    No se realizó rechallenge por contraindicación clínica.
+    ```
+  </Step>
+  
+  <Step title="Confirm and Save">
+    Click **Confirm Decision**. The system:
+    
+    ```python
+    PUT /api/v1/causality/karch-lasagna/confirm/{icsr_id}
+    Body: {
+      "criterios": {...},
+      "score_total_sys": 7,
+      "score_total_qf": 8,
+      "clasificacion_sys": "Probable",
+      "clasificacion_qf": "Probable",
+      "rationale_global_qf": "...",
+      "version_prompt": "KL-1.0.0",
+      "modelo_llm": "gemini-1.5-pro"
+    }
+    ```
+    
+    Creates a `CausalityKarch` record and updates `icsr.ea_causalidad = "Probable"`
+  </Step>
+</Steps>
+
+### Caching and Recalculation
+
+<Note>
+  The last causality assessment is **cached**. Clicking "Suggest" again returns cached result unless you:
+  - Edit case data (product, event, dates)
+  - Pass `use_cache=0` query parameter
+  - Manually click **Recalculate**
+</Note>
+
+## Ficha Técnica (FT) Workflow
+
+<Steps>
+  <Step title="Navigate to FT Tab">
+    In case detail, go to **Causalidad** > **Ficha Técnica**
+    
+    **URL**: `/casos/{icsr_id}/causality/ft`
+  </Step>
+  
+  <Step title="Upload Ficha Técnica">
+    Click **Upload FT** and select the product's technical sheet (PDF, max 12MB)
+    
+    **Supported**: Official Fichas Técnicas with standard EMA/DIGEMID structure
+    
+    ```python
+    POST /api/v1/causality/ft/upload
+    Form-data: file, icsr_id
+    ```
+  </Step>
+  
+  <Step title="OCR and Section Extraction">
+    The system:
+    
+    1. **Renders PDF** to PNG images (200 DPI)
+    2. **OCR Processing** with Tesseract (spa+eng)
+    3. **Header/Footer Removal** (pattern detection)
+    4. **Section Detection** using regex patterns:
+       ```python
+       SECTION_PATTERNS = {
+         "contraindicaciones": r"4\.?3\s*[:\-]?\s*CONTRA[\s-]?INDICACIONES",
+         "advertencias": r"4\.?4\s*[:\-]?\s*ADVERTENCIAS",
+         "interacciones": r"4\.?5\s*[:\-]?\s*INTERACCIONES",
+         "reacciones_adversas": r"4\.?8\s*[:\-]?\s*REACCIONES\s+ADVERSAS",
+         "farmacodinamica": r"5\.?1\s*[:\-]?\s*PROPIEDADES\s+FARMACODIN"
+       }
+       ```
+    
+    **Preview** shows extracted sections:
+    ```
+    ✓ 4.3 Contraindicaciones (245 chars)
+    ✓ 4.8 Reacciones adversas (1,824 chars)
+    ✓ 5.1 Farmacodinámica (892 chars)
+    ```
+  </Step>
+  
+  <Step title="AI Analysis">
+    Click **Analyze**. The system sends to Gemini 1.5 Pro:
+    
+    **Prompt structure**:
+    ```
+    Eres un experto en farmacovigilancia. Analiza la siguiente Ficha Técnica
+    y determina la causalidad para el siguiente caso:
+    
+    CASO:
+    - Producto: Paracetamol 500mg
+    - Evento: Hepatotoxicidad aguda
+    - Paciente: Mujer, 45 años, sin comorbilidades
+    - Dosis: 4g/día por 7 días
+    
+    FICHA TÉCNICA:
+    [4.8 REACCIONES ADVERSAS]
+    Trastornos hepatobiliares:
+    Raros (≥1/10,000 a <1/1,000): Hepatotoxicidad en casos de sobredosis
+    o uso prolongado a dosis altas...
+    
+    Evalúa:
+    1. ¿El evento está listado en la sección 4.8?
+    2. ¿La dosis/duración es un factor contribuyente?
+    3. ¿Existe contraindicación en el perfil del paciente?
+    4. Clasificación de causalidad (Definida/Probable/Posible/Improbable)
+    ```
+    
+    **Response**:
+    ```json
+    {
+      "evento_listado": true,
+      "seccion": "4.8",
+      "frecuencia": "Raros (<1/1,000)",
+      "dosis_relevante": true,
+      "contraindicacion": false,
+      "clasificacion": "Probable",
+      "justificacion": "Hepatotoxicidad por paracetamol es una reacción..."
+    }
+    ```
+  </Step>
+  
+  <Step title="Review and Decision">
+    The interface displays:
+    
+    <Card title="Análisis de Ficha Técnica">
+      **Resultado**: ✅ Evento LISTADO en Ficha Técnica
+      
+      **Sección**: 4.8 Reacciones Adversas
+      
+      **Frecuencia**: Raros (≥1/10,000 a &lt;1/1,000)
+      
+      **Factores**:
+      - Dosis acumulada alta (4g/día × 7 días)
+      - Sin alcohol ni otras hepatotoxinas reportadas
+      - Función hepática normal previa
+      
+      **Clasificación (Sistema)**: Probable
+      
+      **Justificación**:
+      Hepatotoxicidad por paracetamol está documentada en la Ficha Técnica
+      como reacción adversa rara, particularmente en casos de dosis altas
+      o uso prolongado. El cuadro clínico y temporal es consistente.
+      La ausencia de otras causas refuerza la causalidad.
+    </Card>
+    
+    As QF, you can:
+    - Accept classification
+    - Override with different classification
+    - Add your rationale
+  </Step>
+  
+  <Step title="Save FT Decision">
+    Click **Confirm**:
+    
+    ```python
+    PUT /api/v1/icsr-caso-prueba/{icsr_id}/ftqf
+    Body: {
+      "ea_causalidad_ft": "Probable",
+      "ea_causalidad_ft_justificacion": "Acepto análisis del sistema...",
+      "ft_evento_listado": true,
+      "ft_seccion": "4.8",
+      "ft_frecuencia": "Raros"
+    }
+    ```
+  </Step>
+</Steps>
+
+### FT vs Karch-Lasagna
+
+You can perform **both** assessments:
+
+- **Karch-Lasagna**: Mandatory for regulatory reports
+- **FT**: Complementary, useful for product labeling decisions
+
+If both are done, the **Karch-Lasagna** classification is used as the official `ea_causalidad` value.
+
+## Special Cases
+
+<AccordionGroup>
+  <Accordion title="Rechallenge">
+    **Rechallenge** (re-administration after dechallenge) is the strongest evidence of causality but is **rarely performed** due to ethical concerns.
+    
+    **When rechallenge happens**:
+    - Unintentional (patient restarts medication without medical advice)
+    - No alternative treatment available
+    - Event was mild and resolved
+    
+    **Scoring**:
+    - Positive rechallenge (event recurred): +3 points (Karch-Lasagna)
+    - Classification often becomes **Definida**
+    
+    **Documentation**:
+    ```
+    Rechallenge: Sí
+    Resultado: Positivo
+    Detalles: Paciente reinició paracetamol por cuenta propia.
+              Urticaria reapareció a las 4 horas.
+              Se suspendió definitivamente.
+    ```
+  </Accordion>
+  
+  <Accordion title="Multiple Suspected Products">
+    When multiple products are suspected:
+    
+    1. Perform **separate causality assessments** for each product
+    2. Create multiple `CausalityKarch` records linked to same ICSR
+    3. Use `producto_evaluado` field to distinguish:
+       ```python
+       CausalityKarch(
+         icsr_id=123,
+         producto_evaluado="Paracetamol",
+         clasificacion_qf="Probable"
+       )
+       CausalityKarch(
+         icsr_id=123,
+         producto_evaluado="Ibuprofeno",
+         clasificacion_qf="Posible"
+       )
+       ```
+    4. Mark the **most likely** product as `producto_sospechoso`
+  </Accordion>
+  
+  <Accordion title="Drug-Drug Interactions">
+    If the event is likely an **interaction** between drugs:
+    
+    - Primary assessment: Evaluate the **triggering** drug
+    - Secondary assessment: Note interaction in **Factores Contribuyentes**
+    - Document:
+       ```
+       Factores Contribuyentes: Interacción medicamentosa.
+       Paciente recibió Warfarina + Paracetamol (altas dosis).
+       Aumento de INR consistente con interacción conocida.
+       ```
+    - Classification usually: **Probable** or **Definida** (if well-documented interaction)
+  </Accordion>
+  
+  <Accordion title="Insufficient Information">
+    If critical data is missing:
+    
+    - Classification: **Condicional** or **Inclasificable**
+    - Document missing elements:
+       ```
+       Información Faltante:
+       - Fechas exactas de inicio/fin del evento
+       - Dosis y duración del tratamiento
+       - Medicamentos concomitantes
+       - Resultado de dechallenge (medicamento aún en uso)
+       ```
+    - **Next action**: Initiate followup → [Followup Management](/guides/followup-management)
+    - **Re-evaluate** after receiving additional data
+  </Accordion>
+</AccordionGroup>
+
+## Quality Assurance
+
+Before finalizing causality:
+
+<Check>**Narrative reviewed** completely</Check>
+<Check>**All events coded** in MedDRA</Check>
+<Check>**Temporal relationship** documented (dates)</Check>
+<Check>**Concomitant medications** listed</Check>
+<Check>**Dechallenge outcome** documented (if applicable)</Check>
+<Check>**Alternative causes** considered and excluded</Check>
+<Check>**Rationale clear** and clinically sound</Check>
+<Check>**Classification consistent** with score</Check>
+
+## API Reference
+
+```python
+# Karch-Lasagna
+GET /api/v1/causality/karch-lasagna/last/{icsr_id}
+GET /api/v1/causality/karch-lasagna/suggest/{icsr_id}?debug=1&use_cache=0
+PUT /api/v1/causality/karch-lasagna/confirm/{icsr_id}
+
+# Ficha Técnica
+POST /api/v1/causality/ft/upload
+POST /api/v1/causality/ft/analyze/{icsr_id}
+PUT /api/v1/icsr-caso-prueba/{icsr_id}/ftqf
+```
+
+See **API Reference** for complete endpoint documentation.

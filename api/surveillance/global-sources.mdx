@@ -1,0 +1,864 @@
+---
+title: 'Global Data Sources'
+description: 'Query regulatory agencies directly: FDA, EMA, DIGEMID, and VigiAccess'
+icon: 'globe'
+---
+
+## Overview
+
+VIGIA provides direct API access to multiple global regulatory data sources, enabling on-demand queries without scraping delays. These endpoints supplement scheduled surveillance by providing real-time access to regulatory databases.
+
+## Available Sources
+
+<CardGroup cols={2}>
+  <Card title="FDA" icon="flag-usa">
+    US FDA medical device recalls and safety alerts
+  </Card>
+  <Card title="EMA" icon="flag-eu">
+    European Medicines Agency safety updates
+  </Card>
+  <Card title="DIGEMID" icon="flag-pe">
+    Peru regulatory authority alerts and product registry
+  </Card>
+  <Card title="VigiAccess" icon="globe">
+    WHO global adverse drug reaction database
+  </Card>
+</CardGroup>
+
+---
+
+## Regulators API
+
+Query multiple regulatory agencies for product information.
+
+**Base Path:** `/api/v1/regulators`
+
+**Implementation:** `backend/app/routers/regulators.py`
+
+### Search All Agencies
+
+Search across all configured regulatory agencies simultaneously.
+
+```http
+GET /api/v1/regulators/search?q={query}&max_items={limit}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `q` | string | Yes | Search query (drug name, active ingredient) |
+| `max_items` | integer | No | Maximum results per agency (default: 50) |
+
+**Response:**
+
+```json
+[
+  {
+    "pais": "United States",
+    "agencia": "FDA",
+    "nombre_medicamento": "Acetaminophen Tablets",
+    "sustancia_activa": "Acetaminophen",
+    "forma_farmaceutica": "Tablet",
+    "concentracion": "500mg",
+    "titular": "Generic Pharma Inc.",
+    "estado": "Autorizado",
+    "numero_registro": "NDA021234",
+    "enlace": "https://www.accessdata.fda.gov/..."
+  },
+  {
+    "pais": "España",
+    "agencia": "AEMPS",
+    "nombre_medicamento": "Paracetamol 500mg comprimidos",
+    "sustancia_activa": "Paracetamol",
+    "forma_farmaceutica": "Comprimidos",
+    "concentracion": "500mg",
+    "titular": "Laboratorios Farma SA",
+    "estado": "Autorizado",
+    "numero_registro": "65123",
+    "enlace": "https://cima.aemps.es/cima/..."
+  }
+]
+```
+
+**Schema:** `MedRecord` ([types.py:4-14](~/workspace/source/backend/app/services/regulators/types.py))
+
+**Example:**
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.vigia.app/api/v1/regulators/search?q=paracetamol&max_items=10" \
+  -H "Authorization: Bearer <token>"
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "https://api.vigia.app/api/v1/regulators/search",
+    params={"q": "paracetamol", "max_items": 10},
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+products = response.json()
+for product in products:
+    print(f"{product['agencia']}: {product['nombre_medicamento']}")
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'https://api.vigia.app/api/v1/regulators/search?q=paracetamol&max_items=10',
+  {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  }
+);
+
+const products = await response.json();
+products.forEach(p => {
+  console.log(`${p.agencia}: ${p.nombre_medicamento}`);
+});
+```
+</CodeGroup>
+
+---
+
+### Search Specific Agency
+
+Query a single regulatory agency.
+
+```http
+GET /api/v1/regulators/search/{agency}?q={query}&max_items={limit}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agency` | string | Yes | Agency code: `fda`, `ema`, `aemps`, `digemid`, etc. |
+| `q` | string | Yes | Search query |
+| `max_items` | integer | No | Maximum results (default: 50) |
+
+**Supported Agencies:**
+
+| Code | Agency | Country/Region |
+|------|--------|----------------|
+| `fda` | Food and Drug Administration | United States |
+| `ema` | European Medicines Agency | European Union |
+| `aemps` | Agencia Española de Medicamentos | Spain |
+| `digemid` | Dirección General de Medicamentos | Peru |
+| `invima` | Instituto Nacional de Vigilancia | Colombia |
+| `anvisa` | Agência Nacional de Vigilância Sanitária | Brazil |
+| `anmat` | Administración Nacional de Medicamentos | Argentina |
+
+**Example:**
+
+<CodeGroup>
+```bash cURL - FDA Only
+curl -X GET "https://api.vigia.app/api/v1/regulators/search/fda?q=ibuprofen&max_items=25" \
+  -H "Authorization: Bearer <token>"
+```
+
+```python Python - EMA Only
+import requests
+
+response = requests.get(
+    "https://api.vigia.app/api/v1/regulators/search/ema",
+    params={"q": "ibuprofen", "max_items": 25},
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+ema_products = response.json()
+```
+
+```javascript JavaScript - DIGEMID Only
+const response = await fetch(
+  'https://api.vigia.app/api/v1/regulators/search/digemid?q=ibuprofeno&max_items=25',
+  {
+    headers: { 'Authorization': `Bearer ${token}` }
+  }
+);
+
+const digemidProducts = await response.json();
+```
+</CodeGroup>
+
+---
+
+## FDA Integration
+
+Direct access to FDA medical device recalls and safety communications.
+
+**Base Path:** `/api/v1/fda`
+
+**Features:**
+- Medical device recalls
+- Early alerts and safety communications
+- Automatic English-to-Spanish translation
+- AI-powered product categorization (when `GEMINI_API_KEY` configured)
+
+### Search FDA
+
+```http
+GET /api/v1/fda/search?q={query}&max_results={limit}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `q` | string | Yes | Search term (device name, IFA) in Spanish or English |
+| `max_results` | integer | No | Max results (1-25, default: 10) |
+
+**Response:**
+
+```json
+[
+  {
+    "titulo": "Alerta temprana para el sistema de acceso vascular WATCHMAN",
+    "medicamento": "Sistema de acceso\nWATCHMAN",
+    "evento": "El dispositivo puede desprenderse durante el procedimiento, causando complicaciones vasculares graves.",
+    "url": "https://www.fda.gov/medical-devices/medical-device-recalls/...",
+    "fecha_publicada": "2024-08-05T16:00:00Z"
+  }
+]
+```
+
+**Schema:** `FDAItem`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `titulo` | string | Translated alert title (Spanish) |
+| `medicamento` | string | Generic device type + brand (multiline) |
+| `evento` | string | Event description / reason for recall |
+| `url` | string | Source URL on FDA website |
+| `fecha_publicada` | string \| null | Publication date (ISO 8601) |
+
+**Example:**
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.vigia.app/api/v1/fda/search?q=stent&max_results=5" \
+  -H "Authorization: Bearer <token>"
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "https://api.vigia.app/api/v1/fda/search",
+    params={"q": "stent", "max_results": 5},
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+fda_items = response.json()
+for item in fda_items:
+    print(f"{item['titulo']} - {item['medicamento']}")
+```
+</CodeGroup>
+
+**Translation:**
+
+All FDA content is automatically translated from English to Spanish using `deep_translator`:
+
+- **Title:** Translated and cleaned
+- **Event:** Summarized (1-3 sentences)
+- **Device Type:** Mapped to Spanish generic terms
+
+**AI Enhancement:**
+
+When `GEMINI_API_KEY` is configured, Gemini 1.5 Flash refines:
+
+- Generic device categorization
+- Brand/model extraction
+- Event summarization
+
+**Implementation:** `backend/app/services/fda.py`
+
+---
+
+## VigiAccess Integration
+
+Query the WHO VigiAccess global adverse drug reaction database.
+
+**Base Path:** `/api/v1/vigiaccess`
+
+### Search Adverse Reactions
+
+```http
+GET /api/v1/vigiaccess/search?drug={drug}&reaction={reaction}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `drug` | string | Yes | Drug/product name |
+| `reaction` | string | No | Specific adverse reaction |
+
+**Response:**
+
+```json
+{
+  "drug": "Paracetamol",
+  "reactions": [
+    {
+      "reaction": "Hepatotoxicity",
+      "count": 1523,
+      "countries": 45,
+      "trend": "Aumentando"
+    },
+    {
+      "reaction": "Skin rash",
+      "count": 892,
+      "countries": 38,
+      "trend": "Estable"
+    }
+  ],
+  "total_reports": 12456,
+  "reporting_countries": 67
+}
+```
+
+**Example:**
+
+```bash
+curl -X GET "https://api.vigia.app/api/v1/vigiaccess/search?drug=paracetamol&reaction=hepatotoxicity" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Product Dashboard
+
+Get comprehensive VigiAccess statistics for a product.
+
+```http
+GET /api/v1/vigiaccess/dashboard?product_id={id}
+```
+
+**Response:**
+
+```json
+{
+  "product_id": 123,
+  "product_name": "Paracetamol",
+  "total_reports": 12456,
+  "serious_reports": 3421,
+  "countries_reporting": 67,
+  "top_reactions": [
+    {"reaction": "Hepatotoxicity", "count": 1523},
+    {"reaction": "Allergic reaction", "count": 1124}
+  ],
+  "temporal_trends": [
+    {"year": 2023, "count": 2341},
+    {"year": 2024, "count": 2789}
+  ],
+  "geographic_distribution": [
+    {"country": "United States", "reports": 3456},
+    {"country": "United Kingdom", "reports": 2134}
+  ]
+}
+```
+
+**Features:**
+
+- Global ADR statistics from 150+ countries
+- Comparative analysis across regions
+- Temporal trend analysis
+- Dashboard visualization data
+
+**Implementation:** `backend/app/routers/vigiaccess.py`, `backend/app/routers/vigiaccess_dashboard.py`
+
+---
+
+## DIGEMID Integration
+
+Access Peru's DIGEMID regulatory alerts and product registry.
+
+**Endpoints:**
+
+```bash
+# Search DIGEMID product registry
+GET /api/v1/regulators/search/digemid?q={query}
+
+# Get DIGEMID alerts via surveillance
+GET /api/v1/surveillance/results?scope=national&fuente=DIGEMID
+```
+
+**Data Sources:**
+
+- **Alertas Sanitarias:** Health alerts and recalls
+- **RAM (Reacciones Adversas):** Adverse reaction reports
+- **Registro Sanitario:** Product authorization registry
+
+**Example:**
+
+```python
+import requests
+
+# Search product registry
+response = requests.get(
+    "https://api.vigia.app/api/v1/regulators/search/digemid",
+    params={"q": "ibuprofeno"},
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+products = response.json()
+
+# Get recent DIGEMID alerts
+response = requests.get(
+    "https://api.vigia.app/api/v1/surveillance/results",
+    params={
+        "scope": "national",
+        "query": "DIGEMID",
+        "limit": 20
+    },
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+alerts = response.json()["items"]
+```
+
+---
+
+## EMA Integration
+
+European Medicines Agency safety updates and product information.
+
+**Endpoints:**
+
+```bash
+# Search EMA via regulators API
+GET /api/v1/regulators/search/ema?q={query}
+
+# Get EMA alerts via surveillance
+GET /api/v1/surveillance/results?scope=external&fuente=EMA
+```
+
+**Data Sources:**
+
+- **Safety Updates:** Pharmacovigilance announcements
+- **EPAR (European Public Assessment Reports):** Product assessments
+- **Direct Healthcare Professional Communications (DHPC):** Urgent safety alerts
+
+**Example:**
+
+```bash
+# Search EMA products
+curl -X GET "https://api.vigia.app/api/v1/regulators/search/ema?q=insulin&max_items=10" \
+  -H "Authorization: Bearer <token>"
+
+# Get recent EMA safety updates
+curl -X GET "https://api.vigia.app/api/v1/surveillance/results?scope=external&query=EMA&severity=Alta" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Data Enrichment Pipeline
+
+VIGIA enhances regulatory data through a multi-stage pipeline:
+
+<Steps>
+  <Step title="Raw Data Extraction">
+    Scrape HTML from regulatory websites
+  </Step>
+  
+  <Step title="Translation">
+    Translate English content to Spanish using `deep_translator`
+  </Step>
+  
+  <Step title="Product Normalization">
+    Map brand names to generic device/drug types
+  </Step>
+  
+  <Step title="AI Enhancement (Optional)">
+    Use Gemini 1.5 Flash to refine categorization and summarize events
+  </Step>
+  
+  <Step title="Storage">
+    Store normalized data in `SurveillanceItem` model
+  </Step>
+</Steps>
+
+### Translation Service
+
+**Implementation:** `backend/app/services/fda.py:45-73`
+
+```python
+from deep_translator import GoogleTranslator
+from functools import lru_cache
+
+@lru_cache(maxsize=4096)
+def translate_to_spanish(text: str) -> str:
+    """Translate English to Spanish with caching."""
+    if len(text) <= 4500:
+        return GoogleTranslator(source="auto", target="es").translate(text)
+    
+    # Split long texts by sentences
+    parts = re.split(r"(?<=[\.\?!])\s+", text)
+    translated_parts = []
+    
+    for part in parts:
+        translated_parts.append(
+            GoogleTranslator(source="auto", target="es").translate(part)
+        )
+    
+    return " ".join(translated_parts)
+```
+
+### Product Normalization
+
+**Generic Synonyms:** `backend/app/services/fda.py:150-180`
+
+Maps English device terms to Spanish categories:
+
+```python
+GENERIC_SYNONYMS = [
+    (re.compile(r"\b(catheter|ablation\s+catheter)\b", re.I), "Catéter"),
+    (re.compile(r"\b(stent|endoprosthesis)\b", re.I), "Stent vascular"),
+    (re.compile(r"\b(glucose\s+monitor|cgm)\b", re.I), "Monitor de glucosa (CGM)"),
+    (re.compile(r"\b(pacemaker)\b", re.I), "Marcapasos"),
+    (re.compile(r"\b(defibrillator)\b", re.I), "Desfibrilador"),
+]
+```
+
+**Brand Detection:** `backend/app/services/fda.py:190-210`
+
+Extracts brand names using pattern matching:
+
+```python
+BRAND_PATTERN = re.compile(r"\b([A-Z][A-Z0-9\-]{3,})\b")
+BRAND_STOP_WORDS = {"ACCESS", "SYSTEM", "CATHETER", "DEVICE", "PUMP"}
+
+def extract_brand(text: str) -> str:
+    for match in BRAND_PATTERN.finditer(text):
+        candidate = match.group(1)
+        if candidate not in BRAND_STOP_WORDS:
+            return candidate
+    return ""
+```
+
+### AI Enhancement (Gemini)
+
+**Implementation:** `backend/app/services/fda.py:220-270`
+
+When `GEMINI_API_KEY` is configured:
+
+```python
+import google.generativeai as genai
+
+def refine_with_ai(raw_data: dict) -> dict:
+    """
+    Use Gemini 1.5 Flash to normalize fields.
+    
+    Returns:
+        {
+            "titulo_es": "Translated and cleaned title",
+            "evento_es": "1-3 sentence event summary",
+            "producto_generico_es": "Generic device type",
+            "marca_o_linea": "Brand/series if clear",
+            "modelo_o_variante": "Model/lot if adds value"
+        }
+    """
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    
+    prompt = f"""
+You are a regulatory analyst preparing health reports in SPANISH.
+Return STRICT JSON with this form:
+
+{{
+  "titulo_es": "...",
+  "evento_es": "...",
+  "producto_generico_es": "...",
+  "marca_o_linea": "...",
+  "modelo_o_variante": "..."
+}}
+
+Data:
+- title_en: {raw_data['title_en']}
+- reason_en: {raw_data['reason_en']}
+- product_candidates: {raw_data['product_candidates']}
+"""
+    
+    response = model.generate_content(prompt)
+    return json.loads(response.text)
+```
+
+---
+
+## Comparison: Surveillance vs Direct Query
+
+| Feature | Scheduled Surveillance | Direct Query (Regulators API) |
+|---------|------------------------|--------------------------------|
+| **Data Freshness** | Depends on schedule (weekly/bi-weekly) | Real-time |
+| **Coverage** | All configured sources | Single agency per request |
+| **Storage** | Persisted in database | Not stored |
+| **Filtering** | Advanced (severity, trends, etc.) | Basic (name search) |
+| **Reports** | Email reports with attachments | API response only |
+| **Use Case** | Continuous monitoring, trend analysis | Ad-hoc product lookup |
+
+**When to Use Surveillance:**
+- Automated weekly/bi-weekly monitoring
+- Historical trend analysis
+- Severity-based filtering
+- Automated email reports
+
+**When to Use Direct Query:**
+- Immediate product verification
+- Registration status lookup
+- One-time investigation
+- Real-time alert validation
+
+---
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Optional: AI enhancement for FDA scraping
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Regulator API configuration
+REQUEST_TIMEOUT=25  # seconds
+MAX_RETRIES=2
+```
+
+### Scraper Limits
+
+**Implementation:** `backend/app/services/fda.py:25-30`
+
+```python
+INDEX_LIMIT = 60          # Max detail pages to scrape from index
+MIN_EVENT_CHARS = 120     # Minimum paragraph length for event
+REQUEST_TIMEOUT = 25      # HTTP request timeout (seconds)
+```
+
+---
+
+## Error Handling
+
+### HTTP Errors
+
+```json
+// 404 Not Found
+{
+  "detail": "Agency 'invalid_agency' not found"
+}
+
+// 400 Bad Request
+{
+  "detail": "Query parameter 'q' is required"
+}
+
+// 502 Bad Gateway
+{
+  "detail": "FDA website unavailable"
+}
+```
+
+### Graceful Degradation
+
+Scrapers include fallback strategies:
+
+```python
+try:
+    # Try AI-powered extraction
+    data = extract_with_gemini(raw_html)
+except Exception:
+    try:
+        # Fallback to rule-based extraction
+        data = extract_with_rules(raw_html)
+    except Exception:
+        # Final fallback: basic translation only
+        data = translate_basic(raw_html)
+```
+
+---
+
+## Rate Limits
+
+<Warning>
+**External API Limits:**
+
+- **FDA:** No official rate limit, but excessive requests may be blocked
+- **EMA:** No official rate limit
+- **VigiAccess:** Public API with soft limit (approx. 100 req/hour)
+- **Translation (Google Translate):** Free tier limited to 500K chars/month
+
+**Recommendation:** Use scheduled surveillance for continuous monitoring. Reserve direct queries for urgent/ad-hoc needs.
+</Warning>
+
+---
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Cache Results" icon="database">
+    Store frequently-queried products to reduce API calls.
+    
+    Use surveillance for continuous monitoring instead of repeated direct queries.
+  </Card>
+  
+  <Card title="Combine Approaches" icon="layer-group">
+    **Surveillance:** Weekly monitoring for trends
+    
+    **Direct Query:** Immediate verification during case intake
+  </Card>
+  
+  <Card title="Monitor Translation Costs" icon="coins">
+    Deep Translator uses Google Translate free tier.
+    
+    Enable `GEMINI_API_KEY` for AI enhancement (requires paid API key).
+  </Card>
+  
+  <Card title="Handle Errors Gracefully" icon="shield-check">
+    Regulatory websites may be temporarily unavailable.
+    
+    Implement retry logic and fallback to cached data.
+  </Card>
+</CardGroup>
+
+---
+
+## Integration Examples
+
+### Product Verification During Case Intake
+
+```python
+import requests
+
+def verify_product_registration(product_name: str, country: str, token: str) -> dict:
+    """
+    Verify product is registered with local regulatory authority.
+    """
+    agency_map = {
+        "Peru": "digemid",
+        "United States": "fda",
+        "Spain": "aemps",
+        "European Union": "ema"
+    }
+    
+    agency = agency_map.get(country)
+    if not agency:
+        return {"verified": False, "reason": "Unsupported country"}
+    
+    response = requests.get(
+        f"https://api.vigia.app/api/v1/regulators/search/{agency}",
+        params={"q": product_name, "max_items": 5},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    
+    if response.status_code == 200:
+        results = response.json()
+        if results:
+            return {
+                "verified": True,
+                "registration_number": results[0].get("numero_registro"),
+                "holder": results[0].get("titular"),
+                "status": results[0].get("estado")
+            }
+    
+    return {"verified": False, "reason": "Product not found in registry"}
+
+# Usage
+result = verify_product_registration("Paracetamol 500mg", "Peru", token)
+if result["verified"]:
+    print(f"Product verified: {result['registration_number']}")
+else:
+    print(f"Verification failed: {result['reason']}")
+```
+
+### Cross-Reference Surveillance Alerts
+
+```python
+import requests
+
+def cross_reference_alerts(drug_name: str, token: str) -> dict:
+    """
+    Check if drug has active alerts across multiple sources.
+    """
+    # 1. Check surveillance database
+    surv_response = requests.get(
+        "https://api.vigia.app/api/v1/surveillance/results",
+        params={
+            "scope": "external",
+            "medicamento": drug_name,
+            "severity": "Alta",
+            "limit": 10
+        },
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    
+    surveillance_alerts = surv_response.json()["items"]
+    
+    # 2. Query FDA directly for latest info
+    fda_response = requests.get(
+        "https://api.vigia.app/api/v1/fda/search",
+        params={"q": drug_name, "max_results": 5},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    
+    fda_alerts = fda_response.json()
+    
+    # 3. Check VigiAccess for global ADR trends
+    vigiaccess_response = requests.get(
+        "https://api.vigia.app/api/v1/vigiaccess/search",
+        params={"drug": drug_name},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    
+    vigiaccess_data = vigiaccess_response.json()
+    
+    return {
+        "drug": drug_name,
+        "surveillance_alerts": len(surveillance_alerts),
+        "fda_alerts": len(fda_alerts),
+        "vigiaccess_reports": vigiaccess_data.get("total_reports", 0),
+        "has_active_alerts": len(surveillance_alerts) > 0 or len(fda_alerts) > 0
+    }
+
+# Usage
+result = cross_reference_alerts("Paracetamol", token)
+if result["has_active_alerts"]:
+    print(f"WARNING: {result['surveillance_alerts']} surveillance alerts found")
+    print(f"FDA alerts: {result['fda_alerts']}")
+    print(f"Global VigiAccess reports: {result['vigiaccess_reports']}")
+```
+
+---
+
+## Related Documentation
+
+<CardGroup cols={3}>
+  <Card title="FDA Integration" icon="flag-usa" href="/regulatory/fda">
+    Detailed FDA scraper documentation
+  </Card>
+  <Card title="EMA Integration" icon="flag-eu" href="/regulatory/ema">
+    European Medicines Agency integration
+  </Card>
+  <Card title="DIGEMID" icon="flag-pe" href="/regulatory/digemid">
+    Peru regulatory authority
+  </Card>
+  <Card title="VigiAccess" icon="globe" href="/regulatory/vigiaccess">
+    WHO global database
+  </Card>
+  <Card title="Surveillance Overview" icon="satellite-dish" href="/api/surveillance/overview">
+    Main surveillance API
+  </Card>
+  <Card title="Schedule Management" icon="clock" href="/api/surveillance/schedule">
+    Configure automated scraping
+  </Card>
+</CardGroup>
+
+## Code References
+
+| Component | File Location |
+|-----------|---------------|
+| Regulators Router | `backend/app/routers/regulators.py:1-16` |
+| FDA Scraper | `backend/app/services/fda.py` |
+| Regulator Types | `backend/app/services/regulators/types.py:4-14` |
+| Search Services | `backend/app/services/regulators/scrape_regulators.py` |
+| VigiAccess Router | `backend/app/routers/vigiaccess.py` |
+| VigiAccess Dashboard | `backend/app/routers/vigiaccess_dashboard.py` |

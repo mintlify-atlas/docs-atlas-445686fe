@@ -1,0 +1,145 @@
+---
+title: 'Document Management Overview'
+description: 'API endpoints for managing pharmacovigilance documents, templates, and versions'
+icon: 'folder-open'
+---
+
+## Introduction
+
+The Document Management API provides comprehensive functionality for creating, storing, and managing pharmacovigilance documentation in the VIGIA platform. It supports document versioning, template-based generation, and multiple file formats.
+
+## Base URL
+
+All document management endpoints are prefixed with:
+
+```
+/api/v1/documentos
+```
+
+## Authentication
+
+All endpoints require authentication using the Bearer token obtained from the login endpoint.
+
+```bash
+Authorization: Bearer <your_token>
+```
+
+## Core Features
+
+### Document CRUD Operations
+
+- Create documents with file uploads
+- List and filter documents by code, title, category, or area
+- Update document metadata and files
+- Toggle document validity status
+
+### Version Management
+
+- Create new document versions
+- View version history
+- Download specific versions
+- Switch between document versions
+
+### Template System
+
+- Predefined templates for common pharmacovigilance documents
+- Dynamic field mapping for automated document generation
+- Support for DOCX, PDF, and TXT formats
+- Template CRUD operations
+
+### Document Preview
+
+- PDF preview generation from DOCX files
+- Inline or attachment download options
+- Automatic conversion using LibreOffice or MS Word
+
+## Document Categories
+
+The system supports various document categories:
+
+- **Formato**: Forms and notification templates (e.g., FO-FMV-002, FO-FMV-008)
+- **Procedimiento**: Standard operating procedures (e.g., PD-FMV-010)
+- Custom categories as needed
+
+## File Formats Supported
+
+| Format | Extension | MIME Type | Use Case |
+|--------|-----------|-----------|----------|
+| Microsoft Word | .docx | application/vnd.openxmlformats-officedocument.wordprocessingml.document | Primary document format with template support |
+| PDF | .pdf | application/pdf | Generated previews and exports |
+| Plain Text | .txt | text/plain | Fallback format |
+
+## Storage Structure
+
+Documents are stored in a versioned directory structure:
+
+```
+media/docs/
+└── {codigo}/
+    └── v{version}/
+        └── {codigo}_v{version}.{ext}
+```
+
+Example:
+```
+media/docs/FO-FMV-002/v1.0/FO-FMV-002_v1.0.docx
+```
+
+## Response Models
+
+### DocumentoRead
+
+```json
+{
+  "id": 1,
+  "codigo": "FO-FMV-002",
+  "titulo": "Notificación de Sospecha de Reacción Adversa",
+  "categoria": "Formato",
+  "area": "Farmacovigilancia",
+  "version": "1.0",
+  "vigente": true,
+  "updated_at": "2026-03-03T10:30:00Z",
+  "file_url": "/api/v1/documentos/1/download",
+  "file_name": "FO-FMV-002_v1.0.docx"
+}
+```
+
+### DocumentoVersion
+
+```json
+{
+  "version": "1.0",
+  "file_name": "FO-FMV-002_v1.0.docx",
+  "file_mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "file_size": 45678,
+  "updated_at": "2026-03-03T10:30:00Z"
+}
+```
+
+## Error Handling
+
+The API uses standard HTTP status codes:
+
+- `200 OK`: Successful request
+- `201 Created`: Resource created successfully
+- `400 Bad Request`: Invalid parameters or duplicate code
+- `404 Not Found`: Document or version not found
+- `500 Internal Server Error`: Server-side processing error
+
+## Rate Limiting
+
+API requests are subject to rate limiting based on user role and authentication.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Upload Documents" icon="upload" href="/api/documents/upload">
+    Learn how to create and upload documents
+  </Card>
+  <Card title="Digital Signatures" icon="signature" href="/api/documents/signatures">
+    Add digital signatures to documents
+  </Card>
+  <Card title="Export Formats" icon="file-export" href="/api/documents/export">
+    Export documents in various formats
+  </Card>
+</CardGroup>

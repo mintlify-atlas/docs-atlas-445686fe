@@ -1,0 +1,677 @@
+---
+title: 'Schedule Management'
+description: 'Configure automated CRON-based surveillance scraping and manage execution schedules'
+icon: 'clock'
+---
+
+## Overview
+
+The Schedule API enables configuration of automated surveillance scraping using CRON expressions. Each scope (national/external) maintains its own independent schedule.
+
+**Base Path:** `/api/v1/surveillance`
+
+## Endpoints
+
+### Get Schedule
+
+Retrieve the current scraping schedule for a scope.
+
+```http
+GET /api/v1/surveillance/schedule?scope={scope}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `scope` | string | No | `national` or `external` (default: `national`) |
+
+**Response:**
+
+```json
+{
+  "cron": "0 9 * * MON",
+  "next_run_iso": "2024-03-11T14:00:00Z"
+}
+```
+
+**Schema:** `ScheduleResponse` ([surveillance.py:24-26](~/workspace/source/backend/app/schemas/surveillance.py))
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cron` | string \| null | CRON expression (null if disabled) |
+| `next_run_iso` | string \| null | Next scheduled run (ISO 8601 UTC) |
+
+**Example:**
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.vigia.app/api/v1/surveillance/schedule?scope=external" \
+  -H "Authorization: Bearer <token>"
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "https://api.vigia.app/api/v1/surveillance/schedule",
+    params={"scope": "external"},
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+schedule = response.json()
+print(f"Next run: {schedule['next_run_iso']}")
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'https://api.vigia.app/api/v1/surveillance/schedule?scope=external',
+  {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  }
+);
+
+const schedule = await response.json();
+console.log(`Next run: ${schedule.next_run_iso}`);
+```
+</CodeGroup>
+
+---
+
+### Set Schedule
+
+Configure or update the scraping schedule for a scope.
+
+```http
+POST /api/v1/surveillance/schedule?scope={scope}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `scope` | string | No | `national` or `external` (default: `national`) |
+
+**Request Body:**
+
+```json
+{
+  "cron": "0 9 * * MON,THU",
+  "next_run_iso": "2024-03-07T14:00:00Z"
+}
+```
+
+**Schema:** `ScheduleSet` ([surveillance.py:20-22](~/workspace/source/backend/app/schemas/surveillance.py))
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `cron` | string \| null | No | CRON expression (null to disable) |
+| `next_run_iso` | string \| null | No | Override next run time (ISO 8601) |
+
+<Note>
+If `next_run_iso` is not provided and a valid `cron` is set, the system automatically calculates the next run time based on the CRON expression.
+</Note>
+
+**Response:**
+
+```json
+{
+  "cron": "0 9 * * MON,THU",
+  "next_run_iso": "2024-03-07T14:00:00Z"
+}
+```
+
+**Example:**
+
+<CodeGroup>
+```bash cURL
+curl -X POST "https://api.vigia.app/api/v1/surveillance/schedule?scope=external" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cron": "0 9 * * MON,THU",
+    "next_run_iso": "2024-03-07T14:00:00Z"
+  }'
+```
+
+```python Python
+import requests
+from datetime import datetime, timezone
+
+payload = {
+    "cron": "0 9 * * MON,THU",
+    "next_run_iso": datetime(2024, 3, 7, 14, 0, tzinfo=timezone.utc).isoformat()
+}
+
+response = requests.post(
+    "https://api.vigia.app/api/v1/surveillance/schedule",
+    params={"scope": "external"},
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    },
+    json=payload
+)
+
+print(response.json())
+```
+
+```javascript JavaScript
+const payload = {
+  cron: '0 9 * * MON,THU',
+  next_run_iso: new Date('2024-03-07T14:00:00Z').toISOString()
+};
+
+const response = await fetch(
+  'https://api.vigia.app/api/v1/surveillance/schedule?scope=external',
+  {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  }
+);
+
+const schedule = await response.json();
+console.log(schedule);
+```
+</CodeGroup>
+
+---
+
+## CRON Expressions
+
+### Format
+
+VIGIA uses standard CRON format with 5 fields:
+
+```
+┌───────────── minute (0 - 59)
+│ ┌───────────── hour (0 - 23)
+│ │ ┌───────────── day of month (1 - 31)
+│ │ │ ┌───────────── month (1 - 12)
+│ │ │ │ ┌───────────── day of week (0 - 6) (Sunday=0 or 7)
+│ │ │ │ │
+│ │ │ │ │
+* * * * *
+```
+
+### Common Patterns
+
+| CRON Expression | Description | Use Case |
+|-----------------|-------------|----------|
+| `0 9 * * MON` | Every Monday at 9:00 AM | Weekly national monitoring |
+| `0 9 * * MON,THU` | Monday and Thursday at 9:00 AM | Bi-weekly external monitoring |
+| `0 */6 * * *` | Every 6 hours | High-frequency monitoring |
+| `0 9 1 * *` | First day of month at 9:00 AM | Monthly regulatory review |
+| `30 8 * * 1-5` | Weekdays at 8:30 AM | Daily business day monitoring |
+| `0 0 * * SUN` | Every Sunday at midnight | Weekend batch processing |
+| `0 9,15 * * *` | Daily at 9:00 AM and 3:00 PM | Twice-daily checks |
+
+### Examples
+
+<AccordionGroup>
+  <Accordion title="Weekly National Surveillance">
+    ```json
+    {
+      "cron": "0 9 * * MON",
+      "next_run_iso": null  // Auto-calculated
+    }
+    ```
+    
+    **Execution:** Every Monday at 9:00 AM (America/Lima time)
+    
+    **Use Case:** Monitor DIGEMID alerts weekly
+  </Accordion>
+
+  <Accordion title="Bi-Weekly External Surveillance">
+    ```json
+    {
+      "cron": "0 9 * * MON,THU",
+      "next_run_iso": "2024-03-07T14:00:00Z"
+    }
+    ```
+    
+    **Execution:** Monday and Thursday at 9:00 AM (America/Lima time)
+    
+    **Use Case:** Monitor FDA, EMA twice per week
+  </Accordion>
+
+  <Accordion title="High-Frequency Monitoring">
+    ```json
+    {
+      "cron": "0 */4 * * *",
+      "next_run_iso": null
+    }
+    ```
+    
+    **Execution:** Every 4 hours
+    
+    **Use Case:** Critical product surveillance during safety crisis
+  </Accordion>
+
+  <Accordion title="Monthly Regulatory Review">
+    ```json
+    {
+      "cron": "0 9 1 * *",
+      "next_run_iso": "2024-04-01T14:00:00Z"
+    }
+    ```
+    
+    **Execution:** First day of each month at 9:00 AM
+    
+    **Use Case:** Monthly summary for IPS report preparation
+  </Accordion>
+
+  <Accordion title="Disable Automatic Scraping">
+    ```json
+    {
+      "cron": null,
+      "next_run_iso": null
+    }
+    ```
+    
+    **Execution:** Disabled (manual only)
+    
+    **Use Case:** Switch to manual-only scraping
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Timezone Handling
+
+<Warning>
+**Critical:** All CRON schedules execute in `America/Lima` timezone (UTC-5).
+</Warning>
+
+### Execution Time
+
+- **CRON Expression:** Evaluated in `America/Lima` (UTC-5)
+- **next_run_iso:** Stored and returned in UTC
+- **API Response:** Always ISO 8601 with UTC timezone
+
+**Example:**
+
+```json
+{
+  "cron": "0 9 * * MON",         // 9:00 AM Lima time
+  "next_run_iso": "2024-03-11T14:00:00Z"  // 14:00 UTC (9:00 Lima)
+}
+```
+
+### Setting next_run_iso
+
+You can provide `next_run_iso` in any timezone—it will be converted to UTC:
+
+```json
+// Lima time (UTC-5)
+{
+  "cron": "0 9 * * MON",
+  "next_run_iso": "2024-03-11T09:00:00-05:00"
+}
+
+// Converted to UTC in response
+{
+  "cron": "0 9 * * MON",
+  "next_run_iso": "2024-03-11T14:00:00Z"
+}
+```
+
+---
+
+## Automatic Calculation
+
+If `next_run_iso` is not provided or is null, the system automatically calculates it using `croniter`:
+
+```python
+# Implementation: surveillance.py:207-213
+if (not next_iso) and s.cron:
+    now_lima = datetime.now(ZoneInfo("America/Lima"))
+    it = croniter(s.cron, now_lima)
+    nxt = it.get_next(datetime)
+    next_iso = nxt.astimezone(timezone.utc).isoformat()
+    s.next_run_iso = next_iso
+    db.commit()
+```
+
+**When to Override:**
+
+- **Delay execution:** Push next run to a future date
+- **Immediate run:** Set to current time for urgent scraping
+- **Skip execution:** Set to far future date to temporarily disable
+
+**Example - Delay by One Week:**
+
+```python
+from datetime import datetime, timedelta, timezone
+
+next_week = datetime.now(timezone.utc) + timedelta(days=7)
+
+payload = {
+    "cron": "0 9 * * MON",
+    "next_run_iso": next_week.isoformat()
+}
+```
+
+---
+
+## Scheduler Job
+
+Scheduled jobs execute via APScheduler background worker:
+
+**Implementation:** `backend/app/jobs/surveillance_scheduler.py`
+
+### Execution Flow
+
+<Steps>
+  <Step title="Trigger Time">
+    APScheduler triggers job when `next_run_iso` is reached
+  </Step>
+  
+  <Step title="Scrape Sources">
+    System scrapes all enabled sources for the scope
+  </Step>
+  
+  <Step title="Store Results">
+    New surveillance items are inserted into database
+  </Step>
+  
+  <Step title="Calculate Next Run">
+    `next_run_iso` is updated based on CRON expression
+  </Step>
+  
+  <Step title="Log Execution">
+    `last_run_at` timestamp is recorded in `SurveillanceSchedule` model
+  </Step>
+</Steps>
+
+### Debug Scheduler Jobs
+
+```http
+GET /api/v1/surveillance/scheduler/jobs?scope=external
+```
+
+**Response:**
+
+```json
+{
+  "scheduler": "ok",
+  "scope": "external",
+  "jobs": {
+    "surveillance_external": {
+      "trigger": "cron[day_of_week='mon,thu', hour='9', minute='0']",
+      "next_run_time": "2024-03-07T14:00:00+00:00"
+    }
+  }
+}
+```
+
+**Implementation:** `surveillance_schedule.py:31-45`
+
+---
+
+## Manual Execution
+
+Trigger immediate scraping without affecting the schedule:
+
+```http
+POST /api/v1/surveillance/run?scope={scope}
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "results": {
+    "source-uuid-1": {
+      "items_found": 15,
+      "items_new": 3,
+      "source": "FDA Drug Safety"
+    },
+    "source-uuid-2": {
+      "items_found": 8,
+      "items_new": 0,
+      "source": "EMA Safety Updates"
+    }
+  }
+}
+```
+
+<Note>
+Manual execution via `/run` does **not** update `next_run_iso` or `last_run_at`. It runs independently of the schedule.
+</Note>
+
+---
+
+## Best Practices
+
+### Frequency Recommendations
+
+<CardGroup cols={2}>
+  <Card title="National Scope" icon="flag">
+    **Recommended:** Weekly (Monday)
+    
+    DIGEMID updates are less frequent. Weekly monitoring is sufficient for most cases.
+    
+    ```json
+    {"cron": "0 9 * * MON"}
+    ```
+  </Card>
+  
+  <Card title="External Scope" icon="globe">
+    **Recommended:** Bi-weekly (Monday, Thursday)
+    
+    FDA/EMA publish frequent updates. Monitor 2-3 times per week.
+    
+    ```json
+    {"cron": "0 9 * * MON,THU"}
+    ```
+  </Card>
+</CardGroup>
+
+### Avoid Over-Scraping
+
+<Warning>
+**Do not** set high-frequency scraping (e.g., hourly) for external sources:
+
+- Increases risk of IP blocking by regulatory websites
+- Generates duplicate data (most sources update daily)
+- Wastes server resources
+- May violate terms of service
+
+**Exception:** During safety crisis or product recall, temporary high-frequency monitoring (every 4-6 hours) may be justified.
+</Warning>
+
+### Schedule Coordination
+
+Coordinate schedules with downstream processes:
+
+```json
+// Scrape Monday at 9 AM
+{"cron": "0 9 * * MON"}
+
+// Send reports Monday at 10 AM (after scraping completes)
+// Configure in /send-reports recipient list
+```
+
+### Testing New Schedules
+
+1. **Test CRON Expression:**
+   ```python
+   from croniter import croniter
+   from datetime import datetime
+   from zoneinfo import ZoneInfo
+   
+   now = datetime.now(ZoneInfo("America/Lima"))
+   cron = croniter("0 9 * * MON", now)
+   
+   # Get next 5 executions
+   for _ in range(5):
+       print(cron.get_next(datetime))
+   ```
+
+2. **Set future next_run_iso:**
+   ```json
+   {
+     "cron": "0 9 * * MON",
+     "next_run_iso": "2024-04-01T14:00:00Z"  // First run in future
+   }
+   ```
+
+3. **Monitor with /scheduler/jobs:**
+   ```bash
+   curl -X GET "https://api.vigia.app/api/v1/surveillance/scheduler/jobs?scope=external" \
+     -H "Authorization: Bearer <token>"
+   ```
+
+---
+
+## Error Handling
+
+### Invalid CRON Expression
+
+```json
+// Request
+{
+  "cron": "0 25 * * MON"  // Invalid hour (25)
+}
+
+// Response: 400 Bad Request
+{
+  "detail": "Invalid CRON expression"
+}
+```
+
+### Missing Schedule
+
+If no schedule exists for a scope, `GET /schedule` creates a default disabled schedule:
+
+```json
+{
+  "cron": null,
+  "next_run_iso": null
+}
+```
+
+**Implementation:** `surveillance.py:202-205`
+
+---
+
+## Integration Examples
+
+### Scrape and Email Weekly Report
+
+Combine scheduled scraping with automated reporting:
+
+```python
+import requests
+from datetime import datetime, timedelta, timezone
+
+token = "<your_jwt_token>"
+base_url = "https://api.vigia.app/api/v1/surveillance"
+
+# 1. Configure weekly scraping (Monday 9 AM)
+requests.post(
+    f"{base_url}/schedule",
+    params={"scope": "external"},
+    headers={"Authorization": f"Bearer {token}"},
+    json={"cron": "0 9 * * MON"}
+)
+
+# 2. After scraping completes, send report
+# (Schedule this 1 hour after scraping)
+last_monday = datetime.now(timezone.utc) - timedelta(days=7)
+this_monday = datetime.now(timezone.utc)
+
+requests.post(
+    f"{base_url}/send-reports",
+    params={"scope": "external"},
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    },
+    json={
+        "recipients": ["pharmacovigilance@company.com"],
+        "formats": {"inline": True, "pdf": True},
+        "filters": {
+            "date_from": last_monday.isoformat(),
+            "date_to": this_monday.isoformat()
+        }
+    }
+)
+```
+
+### Dynamic Schedule Adjustment
+
+Adjust frequency based on surveillance volume:
+
+```python
+import requests
+
+def adjust_schedule_based_on_alerts(token, scope="external"):
+    """Increase scraping frequency if high-severity alerts detected."""
+    base_url = "https://api.vigia.app/api/v1/surveillance"
+    
+    # Check recent high-severity alerts
+    response = requests.get(
+        f"{base_url}/results",
+        params={
+            "scope": scope,
+            "severity": "Alta",
+            "limit": 10
+        },
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    
+    results = response.json()
+    alert_count = results["total"]
+    
+    if alert_count > 5:
+        # High alert volume: increase to daily
+        new_cron = "0 9 * * *"
+        print("High alert volume detected. Increasing to daily scraping.")
+    else:
+        # Normal volume: bi-weekly
+        new_cron = "0 9 * * MON,THU"
+        print("Normal alert volume. Setting bi-weekly scraping.")
+    
+    # Update schedule
+    requests.post(
+        f"{base_url}/schedule",
+        params={"scope": scope},
+        headers={"Authorization": f"Bearer {token}"},
+        json={"cron": new_cron}
+    )
+```
+
+---
+
+## Related Endpoints
+
+<CardGroup cols={3}>
+  <Card title="Data Sources" icon="database" href="/api/surveillance/overview#configuration">
+    Configure which sources to scrape
+  </Card>
+  <Card title="Results" icon="magnifying-glass" href="/api/surveillance/overview#querying">
+    Query scraped surveillance items
+  </Card>
+  <Card title="Reports" icon="envelope" href="/api/surveillance/overview#report-formats">
+    Generate and email reports
+  </Card>
+</CardGroup>
+
+## Code References
+
+| Component | File Location |
+|-----------|---------------|
+| Schedule Endpoints | `backend/app/routers/surveillance.py:197-226` |
+| Schedule Schema | `backend/app/schemas/surveillance.py:20-26` |
+| Scheduler Job | `backend/app/jobs/surveillance_scheduler.py` |
+| CRON Parser | Uses `croniter` library |
+| Alternate Scheduler Router | `backend/app/routers/surveillance_schedule.py:47-80` |

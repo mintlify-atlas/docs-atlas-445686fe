@@ -1,0 +1,363 @@
+---
+title: Case Intake
+description: Multi-channel case ingestion workflows including web forms, email, WhatsApp, and OCR processing
+---
+
+VIGIA supports multiple channels for receiving adverse event reports (ICSRs). This guide covers the complete intake workflow from initial reception to case creation.
+
+## Overview
+
+VIGIA automatically ingests cases from:
+
+- **Web Forms**: Direct submission through the VIGIA web interface
+- **Email (IMAP/POP3/Gmail API)**: Automated polling and processing
+- **WhatsApp**: Manual or API-based message intake
+- **OCR Processing**: PDF/image document scanning and extraction
+
+## Web Form Intake
+
+### Direct Case Creation
+
+<Steps>
+  <Step title="Navigate to Cases">
+    Go to **Cases** > **New Case** in the main navigation
+  </Step>
+  
+  <Step title="Fill Required Fields">
+    Complete the case intake form:
+    - **Patient Information**: DNI, initials, age, sex
+    - **Product Information**: Suspected product name and details
+    - **Event Description**: Adverse event narrative
+    - **Reporter Contact**: Email, phone, or WhatsApp
+  </Step>
+  
+  <Step title="Generate Internal Code">
+    The system automatically generates a unique internal code (e.g., `LAB-2024-001`) based on your configured prefix
+    
+    **API Endpoint**: `GET /api/v1/icsr-caso-prueba/codigo-interno/next?prefix=LAB`
+  </Step>
+  
+  <Step title="Submit and Review">
+    Click **Create Case**. The system:
+    - Validates all required fields
+    - Creates the ICSR record
+    - Sends notifications to configured users
+    - Sets initial status to "Pendiente" (Pending)
+  </Step>
+</Steps>
+
+### Auto-filled Fields
+
+When creating a case, VIGIA automatically:
+- Assigns the current date as `fecha_recepcion` (reception date)
+- Sets `origen_notificacion` to "web_form"
+- Creates an audit log entry
+- Initializes followup thread
+
+## Email Intake
+
+### Configuration
+
+Before using email intake, configure your mail server in **Admin** > **Settings** > **Mail**:
+
+```python
+# Supported providers
+IMAP  # Standard IMAP (Gmail, Outlook, etc.)
+POP3  # POP3 protocol
+GMAIL # Gmail API (recommended for Gmail accounts)
+```
+
+### Email Processing Workflow
+
+<Steps>
+  <Step title="Email Polling">
+    VIGIA polls your inbox every 60 seconds (configurable) for new messages
+    
+    **Service**: `email_ingestion.py:ingest_emails()`
+  </Step>
+  
+  <Step title="Message Parsing">
+    For each new email:
+    - Extracts sender information (name, email)
+    - Parses message body (text/html)
+    - Processes attachments (PDF, images, documents)
+    - Extracts Message-ID for threading
+  </Step>
+  
+  <Step title="OCR Processing">
+    PDF and image attachments are automatically processed:
+    ```python
+    # Supported formats: PDF, PNG, JPG, TIFF
+    ocr_file(attachment_path)
+    ```
+    
+    Text is extracted using Tesseract OCR with Spanish + English language models
+  </Step>
+  
+  <Step title="AI-Powered Extraction">
+    The combined email body + OCR text is sent to an LLM for structured extraction:
+    
+    **Service**: `ingesta_service.py:build_icsr_payload_from_text()`
+    
+    Extracted fields:
+    - Patient demographics (age, sex, weight)
+    - Product information (name, dose, route)
+    - Event description and dates
+    - Reporter details
+    - Severity and causality indicators
+  </Step>
+  
+  <Step title="Case Creation">
+    If extraction is successful, an ICSR is automatically created with:
+    - `origen_notificacion` = "email"
+    - `reportante_contacto` = sender email
+    - `descripcion_evento` = full narrative
+    - Attachments saved to `storage/email_attachments/`
+  </Step>
+  
+  <Step title="Followup Thread">
+    A followup message is logged:
+    ```python
+    add_message(
+      icsr_id=icsr.id,
+      channel="email",
+      direction="in",
+      body=email_body,
+      external_id=message_id
+    )
+    ```
+  </Step>
+</Steps>
+
+### Gmail API Integration
+
+For Gmail accounts, use the Gmail API connector for better reliability:
+
+1. Enable Gmail API in Google Cloud Console
+2. Download credentials JSON
+3. Configure in **Admin** > **Ingest** > **Connectors** > **Gmail**
+4. Set `MAIL_PROVIDER=GMAIL` in environment
+
+**Advantages**:
+- No IMAP/POP3 blocks
+- Better rate limits
+- Push notifications (optional)
+- Thread preservation
+
+## WhatsApp Intake
+
+WhatsApp messages can be processed manually or via API:
+
+### Manual Entry
+
+<Steps>
+  <Step title="Copy Message">
+    Copy the WhatsApp message text including reporter phone number
+  </Step>
+  
+  <Step title="Create Case from Text">
+    Navigate to **Cases** > **New from Text**
+    
+    Paste the message and click **Extract**
+  </Step>
+  
+  <Step title="Review and Adjust">
+    The AI extraction fills the form automatically. Review and correct any errors
+  </Step>
+  
+  <Step title="Save">
+    Set `reportante_contacto` to the WhatsApp number in format: `whatsapp:+51999999999`
+  </Step>
+</Steps>
+
+### API Integration (WhatsApp Business)
+
+For automated WhatsApp intake:
+
+1. Set up WhatsApp Business API webhook
+2. Configure webhook URL: `https://your-vigia.com/api/v1/ingest/whatsapp`
+3. Handle incoming messages:
+
+```python
+# backend/app/routers/ingest.py
+@router.post("/whatsapp")
+def whatsapp_webhook(payload: dict):
+    text = extract_whatsapp_message(payload)
+    phone = payload.get("from")
+    
+    icsr_data = build_icsr_payload_from_text(
+        text,
+        overrides={"reportante_contacto": f"whatsapp:{phone}"}
+    )
+    
+    icsr = create_icsr(db, icsr_data)
+    return {"status": "created", "icsr_id": icsr.id}
+```
+
+## OCR Processing
+
+### Supported Document Types
+
+- **Adverse Event Forms**: Pre-printed forms with patient/event data
+- **Medical Records**: Hospital discharge summaries, lab results
+- **Regulatory Documents**: Resolution documents, official reports
+- **Technical Sheets**: Product information leaflets
+
+### OCR Workflow
+
+<Steps>
+  <Step title="Upload Document">
+    Navigate to **Cases** > **Upload Document**
+    
+    Supported formats: PDF, PNG, JPG, TIFF (max 12MB)
+  </Step>
+  
+  <Step title="Document Rendering">
+    PDF documents are converted to PNG images at 180 DPI:
+    ```python
+    from pdf2image import convert_from_bytes
+    images = convert_from_bytes(pdf_data, dpi=180)
+    ```
+  </Step>
+  
+  <Step title="Text Extraction">
+    Each page is processed with Tesseract OCR:
+    ```python
+    import pytesseract
+    text = pytesseract.image_to_string(image, lang='spa+eng')
+    ```
+    
+    Headers and footers are automatically removed using pattern detection
+  </Step>
+  
+  <Step title="Text Cleaning">
+    The OCR output is cleaned:
+    - Dehyphenation of line breaks
+    - Removal of repeated headers/footers
+    - Unicode normalization
+    - Whitespace cleanup
+  </Step>
+  
+  <Step title="Structure Extraction">
+    For specific document types (e.g., resolution documents), VIGIA uses regex patterns to extract structured data:
+    
+    **Service**: `ocr_ingestor.py:ingest_resolucion()`
+    
+    Extracts:
+    - Resolution number and date
+    - Laboratory information
+    - Product registry details
+    - Approval status
+  </Step>
+  
+  <Step title="Preview and Confirm">
+    Review the extracted text and fields. Make manual corrections if needed, then click **Create Case**
+  </Step>
+</Steps>
+
+### OCR Quality Tips
+
+<AccordionGroup>
+  <Accordion title="Improving OCR Accuracy">
+    - Use 300 DPI minimum for scanned documents
+    - Ensure good lighting and contrast
+    - Avoid skewed or rotated images
+    - Use PDF format when possible (better quality)
+    - For handwritten text, manual entry is recommended
+  </Accordion>
+  
+  <Accordion title="Multi-page Documents">
+    VIGIA processes all pages automatically:
+    - Each page is OCR'd separately
+    - Text is concatenated with page markers
+    - Page images are stored for reference
+    - Navigate between pages in case detail view
+  </Accordion>
+  
+  <Accordion title="Language Support">
+    Current OCR models:
+    - Spanish (`spa`): Primary language
+    - English (`eng`): Technical/medical terms
+    - Combined: `spa+eng` for best results
+    
+    Additional languages can be added by installing Tesseract language packs
+  </Accordion>
+</AccordionGroup>
+
+## Post-Intake Workflow
+
+After a case is created through any channel:
+
+1. **Automatic Notifications**: Configured users receive email alerts
+2. **Status Set**: Initial status is "Pendiente" (Pending)
+3. **Evaluation Queue**: Case appears in evaluation dashboard
+4. **Duplicate Detection**: System checks for similar cases by DNI, product, and date range
+5. **Product Assignment**: If product is recognized, links to product catalog
+
+## Case Validation
+
+Before finalizing intake, VIGIA validates:
+
+<Check>Required fields: patient age/sex, product name, event description</Check>
+<Check>Date logic: event date ≤ reception date</Check>
+<Check>Contact format: valid email/phone/WhatsApp format</Check>
+<Check>Duplicate check: warns if similar case exists</Check>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Email not being ingested">
+    **Check**:
+    - Mail server credentials in Settings
+    - Inbox folder name (INBOX vs INBOX.VIGIA)
+    - Firewall allows IMAP/POP3 ports
+    - Check logs: `backend/logs/email_ingestion.log`
+    
+    **Fix**: Test connection with `GET /api/v1/admin/mail/test`
+  </Accordion>
+  
+  <Accordion title="OCR extraction is poor">
+    **Common causes**:
+    - Low resolution scan (< 150 DPI)
+    - Skewed or rotated image
+    - Poor contrast or lighting
+    - Handwritten text (not supported)
+    
+    **Fix**: Re-scan document at higher DPI or enter manually
+  </Accordion>
+  
+  <Accordion title="AI extraction missing fields">
+    **Reasons**:
+    - Incomplete information in source text
+    - Ambiguous or unclear narrative
+    - Non-standard terminology
+    
+    **Fix**: Manually complete missing fields after creation. The system learns from corrections over time.
+  </Accordion>
+</AccordionGroup>
+
+## API Reference
+
+Key endpoints for case intake:
+
+```python
+# Create case
+POST /api/v1/icsr
+POST /api/v1/icsr-caso-prueba
+
+# Preview from text (no DB write)
+POST /api/v1/ingest/preview
+Body: {"text": "patient narrative..."}
+
+# Get next internal code
+GET /api/v1/icsr-caso-prueba/codigo-interno/next?prefix=LAB
+
+# Check code uniqueness
+GET /api/v1/icsr-caso-prueba/codigo-interno/check?code=LAB-2024-001
+
+# Upload OCR document
+POST /api/v1/evaluacion/ficha
+Form-data: file, ips_id, store=true, ocr=true
+```
+
+See **API Reference** for complete endpoint documentation.

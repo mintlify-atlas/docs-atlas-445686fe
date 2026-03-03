@@ -1,0 +1,150 @@
+---
+title: 'ICSR API Overview'
+description: 'Complete API reference for managing Individual Case Safety Reports in VIGIA'
+---
+
+## Introduction
+
+The ICSR (Individual Case Safety Report) API provides comprehensive endpoints for pharmacovigilance case management, including case creation, updates, adverse event tracking, duplicate detection, and followup communications.
+
+## Base URL
+
+All ICSR endpoints are prefixed with:
+
+```
+/api/v1/icsr
+```
+
+## Authentication
+
+All ICSR endpoints require authentication and appropriate permissions:
+
+- `icsr:list` - List and search cases
+- `icsr:read` - View case details
+- `icsr:create` - Create new cases
+- `icsr:update` - Update existing cases
+- `icsr:delete` - Delete cases (requires password confirmation)
+
+## Key Features
+
+### Case Management
+- Create, read, update, and delete ICSR cases
+- Manage patient information, products, and adverse events
+- Track concomitant medications and followup history
+- Support for multiple product entries per case
+
+### Adverse Events
+- Record multiple adverse events per case
+- MedDRA coding support (LLT and PT terms)
+- Event severity, causality, and outcome tracking
+- Individual event-level metadata
+
+### Duplicate Detection
+- Automatic duplicate detection based on patient and event data
+- Scoring algorithm using patient initials, DOB, event date, and product
+- Manual override capabilities for duplicate decisions
+- Bulk duplicate checking for multiple cases
+
+### Followup Communications
+- Email, SMS, and WhatsApp channel support
+- Thread-based conversation tracking
+- Automatic missing data detection and requests
+- Message threading with In-Reply-To headers
+
+### Export & Reporting
+- DIGEMID format PDF export
+- Causality assessment reports
+- Case snapshots and audit trails
+
+## Data Models
+
+### ICSR Structure
+
+Each ICSR case contains:
+
+- **Patient Information**: Demographics, initials, age, sex, weight, diagnosis
+- **Reporter Information**: Name, contact details, occupation
+- **Product Information**: Suspected products with registration details, batch numbers, dosing
+- **Event Information**: Adverse event descriptions, dates, severity, outcomes
+- **Concomitant Medications**: Other medications taken during the period
+- **Timeline**: Receipt dates, submission deadlines, regulatory timelines
+- **Quality Control**: Review status, signal detection, additional comments
+- **Followup History**: Communication thread with reporter
+
+### Event Structure
+
+Each adverse event includes:
+
+- Event text/description
+- Start and end dates
+- Severity classification (grave/no grave)
+- Causality assessment
+- Outcome/resolution status
+- MedDRA coding (LLT and PT)
+- Source documentation
+
+## Pagination
+
+List endpoints support pagination with query parameters:
+
+- `page` - Page number (default: 1)
+- `page_size` - Items per page (default: 20, max: 200)
+- `q` - Full-text search query
+- `fecha_desde` / `fecha_hasta` - Date range filters
+- `order_by` - Sort field (default: "id")
+- `order_dir` - Sort direction ("asc" or "desc", default: "desc")
+
+## Error Handling
+
+The API uses standard HTTP status codes:
+
+- `200` - Success
+- `201` - Created
+- `400` - Bad request (validation error)
+- `401` - Unauthorized
+- `403` - Forbidden (insufficient permissions)
+- `404` - Resource not found
+- `409` - Conflict (e.g., duplicate detection)
+- `500` - Internal server error
+
+## Common Workflows
+
+### Creating a New Case
+
+1. POST to `/api/v1/icsr` with case data
+2. System assigns internal ID and triggers notifications
+3. Automatic duplicate detection runs in background
+4. Missing data auto-reply sent if configured
+
+### Managing Adverse Events
+
+1. GET case details to retrieve existing events
+2. PUT to `/api/v1/icsr/{id}/eventos` to replace all events
+3. Individual event updates via `/api/v1/icsr/{id}/eventos/{event_id}`
+4. MedDRA coding can be updated separately
+
+### Handling Duplicates
+
+1. GET `/api/v1/icsr/{id}/duplicates` to check for potential duplicates
+2. Review matches and scores
+3. PUT to `/api/v1/icsr/{id}/dup` to set manual decision
+4. Mark as unique or link to master case
+
+### Followup Communication
+
+1. GET `/api/v1/icsr/{id}/followup/thread` to view message history
+2. POST to `/api/v1/icsr/{id}/followup/send` to send new message
+3. System handles email threading and external message IDs
+4. Case status automatically updated from "Pendiente" to "En progreso"
+
+## Rate Limits
+
+No explicit rate limits are currently enforced, but bulk operations should be performed judiciously to avoid database load.
+
+## Next Steps
+
+- [Create Case](/api/icsr/create-case) - Create a new ICSR
+- [List Cases](/api/icsr/list-cases) - Query and filter cases
+- [Update Case](/api/icsr/update-case) - Modify existing cases
+- [Manage Events](/api/icsr/events) - Add and update adverse events
+- [Followup](/api/icsr/followup) - Handle reporter communications

@@ -1,0 +1,725 @@
+---
+title: 'System Configuration'
+description: 'Environment variables, system settings, and integration configuration for VIGIA'
+icon: 'gear'
+---
+
+## Overview
+
+VIGIA uses environment variables for configuration, managed through Pydantic Settings. All configuration is centralized in `backend/app/core/config.py` and loaded from `.env` files.
+
+## Configuration Architecture
+
+### Settings Class
+
+The `Settings` class (`backend/app/core/config.py:45-295`) uses Pydantic for validation and type safety:
+
+```python
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=str(ENV_PATH),
+        env_file_encoding="utf-8",
+        extra="ignore",          # Ignore unknown env vars
+        case_sensitive=False,     # Allow lowercase env vars
+    )
+```
+
+### Settings Instance
+
+A singleton settings instance is cached using `@lru_cache` (`backend/app/core/config.py:297-313`):
+
+```python
+from functools import lru_cache
+
+@lru_cache
+def get_settings() -> Settings:
+    s = Settings()
+    # Compatibility exports
+    if not os.getenv("ALGORITHM"):
+        os.environ["ALGORITHM"] = s.JWT_ALGORITHM
+    # Create required directories
+    Path(s.IPS_DOCS_DIR).mkdir(parents=True, exist_ok=True)
+    Path(s.PREVIEW_OUT_DIR).mkdir(parents=True, exist_ok=True)
+    return s
+
+settings = get_settings()
+```
+
+## Configuration Categories
+
+### Database Configuration
+
+#### Single-Tenant (Legacy)
+
+```bash
+# Primary database connection
+DATABASE_URL=postgresql+psycopg2://postgres:password@localhost:5432/vigiadb
+```
+
+#### Multi-Tenant (SaaS)
+
+```bash
+# Master database (tenant registry)
+MASTER_DATABASE_URL=postgresql+psycopg2://postgres:password@localhost:5432/vigia_master
+
+# Template for tenant databases (must include {db_name})
+TENANT_DB_TEMPLATE=postgresql+psycopg2://postgres:password@localhost:5432/{db_name}
+
+# Base domain for tenant URLs
+SAAS_BASE_DOMAIN=midominio.com
+```
+
+**Validation**: Template must contain `{db_name}` placeholder (`backend/app/core/config.py:278-294`).
+
+### Authentication & Security
+
+```bash
+# JWT Configuration
+SECRET_KEY=your-256-bit-secret-key-change-in-production
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480  # 8 hours
+
+# Internal API authentication
+INTERNAL_BEARER=secret-bearer-token-for-jobs
+INTERNAL_API_KEY=secret-api-key-for-internal-calls
+INTERNAL_ACTOR=system+surveillance@vigia
+```
+
+Settings defined at `backend/app/core/config.py:70-77`:
+
+```python
+SECRET_KEY: str = "change-me-in-.env"
+JWT_ALGORITHM: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
+ALGORITHM: str = "HS256"  # Legacy compatibility
+ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+```
+
+### CORS Configuration
+
+```bash
+# Comma-separated or JSON array
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+# OR
+CORS_ORIGINS=["http://localhost:5173","http://127.0.0.1:5173"]
+```
+
+Parsed by validator at `backend/app/core/config.py:198-201`:
+
+```python
+@field_validator("CORS_ORIGINS", mode="before")
+@classmethod
+def _parse_cors(cls, v):
+    return _parse_list(v)  # Accepts both formats
+```
+
+### Mail Configuration
+
+#### Provider Selection
+
+```bash
+# Options: IMAP, POP, GMAIL_API, GRAPH_API
+MAIL_PROVIDER=IMAP
+```
+
+#### IMAP Settings
+
+```bash
+# IMAP server for reading/archiving
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_SSL=true
+IMAP_USER=vigia@empresa.com
+IMAP_PASSWORD=app-specific-password
+IMAP_FOLDER=INBOX
+IMAP_MARK_SEEN=false
+
+# Folders for sent mail archiving
+IMAP_SENT_FOLDERS=INBOX.Sent,Sent,Sent Items,Enviados
+SAVE_TO_SENT_IMAP=false
+ARCHIVE_SENT_VIA_IMAP=false
+
+# Debug options
+IMAP_DEBUG_LIST_FOLDERS=false
+IMAP_TEST_CREATE_FOLDER=false
+```
+
+Defined at `backend/app/core/config.py:98-117`.
+
+#### POP Settings
+
+```bash
+# POP3 server for polling
+POP_HOST=pop.gmail.com
+POP_PORT=995
+POP_SSL=true
+POP_USER=vigia@empresa.com
+POP_PASS=app-specific-password
+POP_TIMEOUT_SECONDS=10
+POP_CONNECT_RETRIES=1
+POP_KEEP_DAYS=14
+INGEST_LENIENT=true
+```
+
+#### SMTP Settings
+
+```bash
+# SMTP for outgoing mail
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USE_SSL=false
+SMTP_STARTTLS=true
+SMTP_FROM=vigia@empresa.com
+SMTP_USER=vigia@empresa.com
+SMTP_PASSWORD=app-specific-password
+
+# BCC configuration
+SMTP_BCC_SELF=false
+SMTP_BCC=  # comma-separated emails or "self"
+```
+
+Defined at `backend/app/core/config.py:124-133`.
+
+#### Mail Poller
+
+```bash
+# Enable/disable automatic polling
+MAIL_POLL_ENABLED=true
+
+# Polling interval in seconds (300 = 5 minutes)
+MAIL_POLL_INTERVAL_SECONDS=300
+
+# Optional: override log level for poller
+MAIL_POLL_LOG_LEVEL=INFO
+```
+
+### LLM Configuration
+
+#### Provider Selection
+
+```bash
+# Primary provider: openai, gemini, azure_openai
+LLM_PROVIDER=openai
+
+# Fallback order (comma-separated or JSON)
+LLM_ORDER=openai,gemini
+```
+
+Validated at `backend/app/core/config.py:238-260`:
+
+```python
+ALLOWED_PROVIDERS = {"openai", "gemini", "azure_openai"}
+
+@field_validator("LLM_ORDER", mode="before")
+@classmethod
+def _parse_llm_order(cls, v):
+    # Parse and validate provider list
+    # Returns cleaned list of allowed providers only
+```
+
+#### OpenAI Configuration
+
+```bash
+# OpenAI (standard)
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1
+OPENAI_TIMEOUT_SECONDS=15
+OPENAI_BASE_URL=  # Optional: custom endpoint
+```
+
+Defined at `backend/app/core/config.py:153-157`.
+
+#### Azure OpenAI Configuration
+
+```bash
+# Azure OpenAI
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4-deployment-name
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
+```
+
+Defined at `backend/app/core/config.py:159-163`.
+
+#### Gemini Configuration
+
+```bash
+# Google Gemini
+GEMINI_ENABLED=false
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-1.5-flash-002
+KARCH_FORCE_LOCAL=true
+KARCH_MAX_LLM_SECONDS=4
+```
+
+Defined at `backend/app/core/config.py:166-170`.
+
+### External APIs
+
+#### VigiAccess (WHO Database)
+
+```bash
+VIGIACCESS_API_BASE_URL=https://api.vigiaccess.org
+VIGIACCESS_API_KEY=your-api-key
+VIGIACCESS_API_TIMEOUT=30
+```
+
+#### Bioportal (Terminology)
+
+```bash
+BIOPORTAL_API_KEY=your-bioportal-api-key
+PROVIDER=bioportal  # or "meddra"
+```
+
+#### ICD-11 (WHO Classification)
+
+```bash
+ICD_CLIENT_ID=your-client-id
+ICD_CLIENT_SECRET=your-client-secret
+ICD_TOKEN_URL=https://icdaccessmanagement.who.int/connect/token
+ICD_SCOPE=icdapi_access
+ICD_BASE=https://id.who.int/icd/release/11/2024-01
+ICD_ACCEPT_LANG=es
+```
+
+Defined at `backend/app/core/config.py:185-190`.
+
+#### Translation Services
+
+```bash
+# Translator: libre, deepl, none
+TRANSLATOR=libre
+VIGIA_TRANSLATE=true
+```
+
+### Media & Documents
+
+```bash
+# Media storage
+MEDIA_ROOT=./media
+MEDIA_DOCS_SUBDIR=docs
+BACKEND_BASE_URL=http://127.0.0.1:8000
+
+# Document encryption (leave empty to disable)
+DOCUMENTS_ENC_KEY=
+
+# LibreOffice for document preview
+LIBREOFFICE_PATH=/usr/bin/libreoffice
+PREVIEW_OUT_DIR=uploads/previews
+
+# IPS (Individual Case Safety Report) documents
+IPS_DOCS_DIR=data/ips
+IPS_TEMPLATE_FO_FMV_023=FO-FMV-023.docx
+IPS_TEMPLATE_PATH=  # Optional override
+```
+
+Defined at `backend/app/core/config.py:53-56` and `135-141`.
+
+### OCR Configuration
+
+```bash
+# Tesseract OCR
+POPPLER_PATH=/usr/bin/poppler
+TESSERACT_CMD=/usr/bin/tesseract
+OCR_LANGS=spa+eng
+```
+
+Defined at `backend/app/core/config.py:79-82`.
+
+### Timezone & Scheduling
+
+```bash
+# Application timezone
+TIMEZONE=America/Lima
+
+# Daily digest cron schedule (cron format)
+DOCS_DIGEST_CRON=0 8 * * *  # 8 AM daily
+
+# Digest recipients (comma-separated)
+DOCS_DIGEST_TO=admin@empresa.com,qa@empresa.com
+
+# Auto-state on contact reception
+OPEN_STATE_ON_CONTACT=En progreso
+```
+
+Defined at `backend/app/core/config.py:143-147`.
+
+### Internal Services
+
+```bash
+# Internal API base URL for jobs
+INTERNAL_BASE_URL=http://127.0.0.1:8000
+INTERNAL_API_PREFIX=/api/v1
+
+# Authentication for internal jobs
+INTERNAL_BEARER=secret-token
+INTERNAL_API_KEY=secret-key
+INTERNAL_ACTOR=system+surveillance@vigia
+```
+
+Defined at `backend/app/core/config.py:172-177`.
+
+## Configuration Validation
+
+### List Parsing Helper
+
+Many settings accept both comma-separated strings and JSON arrays (`backend/app/core/config.py:15-31`):
+
+```python
+def _parse_list(v) -> List[str]:
+    """Accepts JSON '["a","b"]' or comma-separated 'a,b'"""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return []
+        if s.startswith("["):
+            try:
+                return [str(x).strip() for x in json.loads(s)]
+            except Exception:
+                pass
+        return [item.strip() for item in s.split(",") if item.strip()]
+    return [str(v).strip()]
+```
+
+### Field Validators
+
+#### IMAP Sent Folders
+
+```python
+@field_validator("IMAP_SENT_FOLDERS", mode="before")
+@classmethod
+def _parse_imap_sent(cls, v):
+    lst = _parse_list(v)
+    return lst or [
+        "INBOX.Sent",
+        "Sent",
+        "Sent Items",
+        "Enviados",
+        "Sent Messages",
+    ]
+```
+
+#### Mail Provider
+
+```python
+@field_validator("MAIL_PROVIDER", mode="before")
+@classmethod
+def _norm_mail(cls, v):
+    if not v:
+        return "IMAP"
+    up = str(v).strip().upper()
+    if up not in {"IMAP", "POP", "GMAIL_API", "GRAPH_API"}:
+        raise ValueError(
+            "MAIL_PROVIDER debe ser IMAP | POP | GMAIL_API | GRAPH_API"
+        )
+    return up
+```
+
+#### IMAP Password Fallback
+
+```python
+@field_validator("IMAP_PASSWORD", mode="before")
+@classmethod
+def _imap_pwd_fallback(cls, v):
+    # Try IMAP_PASSWORD, fallback to IMAP_PASS
+    return v or os.getenv("IMAP_PASS", None)
+```
+
+#### Master Database Default
+
+```python
+@field_validator("MASTER_DATABASE_URL", mode="after")
+@classmethod
+def _default_master_db(cls, v, info):
+    """If no MASTER_DATABASE_URL, use DATABASE_URL (legacy mode)"""
+    if v:
+        return v
+    db_url = info.data.get("DATABASE_URL")
+    if not db_url:
+        raise ValueError(
+            "Debe configurar MASTER_DATABASE_URL o al menos DATABASE_URL en .env"
+        )
+    return db_url
+```
+
+## Environment Files
+
+### File Locations
+
+Configuration is loaded from `.env` files in the following order:
+
+1. `backend/.env` (primary)
+2. `backend/.env.local` (local overrides, gitignored)
+3. Environment variables (highest priority)
+
+### Example .env File
+
+From `backend/.env.example`:
+
+```bash
+# Database
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/vigiadb
+
+# Security
+SECRET_KEY=CHANGE_ME
+
+# CORS
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+# Mail
+MAIL_PROVIDER=imap
+IMAP_HOST=imap.empresa.com
+IMAP_PORT=993
+IMAP_SSL=true
+IMAP_USER=vigia@empresa.com
+IMAP_PASS=password
+IMAP_FOLDER=INBOX
+IMAP_MARK_SEEN=false
+```
+
+### Multi-Tenant .env
+
+```bash
+# Multi-Tenant SaaS Configuration
+
+# Master database
+MASTER_DATABASE_URL=postgresql+psycopg2://postgres:password@localhost/vigia_master
+
+# Tenant template
+TENANT_DB_TEMPLATE=postgresql+psycopg2://postgres:password@localhost/{db_name}
+
+# SaaS domain
+SAAS_BASE_DOMAIN=midominio.com
+# Local dev: SAAS_BASE_DOMAIN=localhost:5173
+
+# Legacy database (optional)
+DATABASE_URL=postgresql+psycopg2://postgres:password@localhost/vigiadb
+
+# Security
+SECRET_KEY=your-production-secret-key-256-bits
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+
+# CORS
+CORS_ORIGINS=["https://app.midominio.com","https://*.midominio.com"]
+
+# LLM
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1
+
+# Mail
+MAIL_PROVIDER=IMAP
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_SSL=true
+IMAP_USER=vigia@empresa.com
+IMAP_PASSWORD=app-specific-password
+MAIL_POLL_ENABLED=true
+MAIL_POLL_INTERVAL_SECONDS=300
+
+# SMTP
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_STARTTLS=true
+SMTP_FROM=vigia@empresa.com
+SMTP_USER=vigia@empresa.com
+SMTP_PASSWORD=app-specific-password
+
+# Media
+MEDIA_ROOT=/var/vigia/media
+BACKEND_BASE_URL=https://api.midominio.com
+
+# Timezone
+TIMEZONE=America/Lima
+```
+
+## Derived Configuration
+
+### Computed Paths
+
+```python
+# From backend/app/core/config.py:315-317
+MEDIA_ROOT_PATH: Path = Path(settings.MEDIA_ROOT).resolve()
+MEDIA_DOCS_PATH: Path = MEDIA_ROOT_PATH / settings.MEDIA_DOCS_SUBDIR
+```
+
+### Digest Recipients Helper
+
+```python
+# From backend/app/core/config.py:320-321
+def get_docs_digest_recipients() -> List[str]:
+    return [e.strip() for e in (settings.DOCS_DIGEST_TO or []) if e and e.strip()]
+```
+
+## Configuration at Runtime
+
+### Accessing Settings
+
+```python
+from app.core.config import settings
+
+# Direct access
+db_url = settings.DATABASE_URL
+api_key = settings.OPENAI_API_KEY
+
+# Use in dependencies
+from fastapi import Depends
+
+def get_settings():
+    from app.core.config import settings
+    return settings
+
+@router.get("/config")
+def get_config(settings: Settings = Depends(get_settings)):
+    return {"timezone": settings.TIMEZONE}
+```
+
+### Environment-Specific Config
+
+```python
+import os
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+if ENVIRONMENT == "production":
+    # Production-specific settings
+    DEBUG = False
+    LOG_LEVEL = "WARNING"
+else:
+    # Development settings
+    DEBUG = True
+    LOG_LEVEL = "DEBUG"
+```
+
+## Admin Configuration Endpoints
+
+VIGIA provides admin endpoints for managing background jobs (`backend/app/routers/admin.py`).
+
+### Mail Poller Status
+
+```http
+GET /api/v1/admin/poller/status
+```
+
+Response:
+```json
+{
+  "enabled": true,
+  "running": true,
+  "jobs": [
+    {
+      "id": "poll_mail",
+      "next_run": "2024-03-03T10:35:00Z",
+      "trigger": "interval[0:05:00]"
+    }
+  ]
+}
+```
+
+### Start Poller
+
+```http
+POST /api/v1/admin/poller/start
+```
+
+Forces scheduler to start even if `MAIL_POLL_ENABLED=false`.
+
+### Stop Poller
+
+```http
+POST /api/v1/admin/poller/stop
+```
+
+Stops scheduler gracefully.
+
+### Run Poller Immediately
+
+```http
+POST /api/v1/admin/poller/run-now?limit=5
+```
+
+Executes mail polling immediately without affecting scheduler.
+
+## Best Practices
+
+### Security
+
+1. **Never commit `.env` files** to version control
+2. **Use strong `SECRET_KEY`** (256-bit random string)
+3. **Rotate secrets** periodically
+4. **Use environment-specific keys** (dev, staging, prod)
+5. **Restrict `CORS_ORIGINS`** to known domains
+
+### Performance
+
+1. **Cache settings** using `@lru_cache`
+2. **Use connection pooling** (`pool_pre_ping=True`)
+3. **Set appropriate timeouts** for external APIs
+4. **Configure worker counts** based on load
+
+### Maintenance
+
+1. **Document custom settings** in `.env.example`
+2. **Use validation** to catch config errors early
+3. **Log configuration** (without secrets) at startup
+4. **Version control** `.env.example` only
+
+### Multi-Tenant
+
+1. **Validate `TENANT_DB_TEMPLATE`** includes `{db_name}`
+2. **Use separate databases** for master and tenants
+3. **Configure `SAAS_BASE_DOMAIN`** for production
+4. **Test tenant isolation** thoroughly
+
+## Troubleshooting
+
+### Configuration Not Loading
+
+**Problem**: Changes to `.env` not reflected
+
+**Solution**: 
+- Restart application (settings cached via `@lru_cache`)
+- Check `.env` file location (must be in backend directory)
+- Verify no typos in variable names (case-insensitive)
+
+### Database Connection Errors
+
+**Problem**: `DATABASE_URL` connection fails
+
+**Solution**:
+- Test connection string manually: `psql $DATABASE_URL`
+- Check PostgreSQL is running
+- Verify credentials and database exists
+- Use `pool_pre_ping=True` for connection health checks
+
+### CORS Errors
+
+**Problem**: Frontend blocked by CORS policy
+
+**Solution**:
+- Add frontend URL to `CORS_ORIGINS`
+- Include protocol (http/https) and port
+- Use comma-separated or JSON array format
+- Restart backend after changes
+
+### LLM Provider Errors
+
+**Problem**: LLM API calls failing
+
+**Solution**:
+- Verify API key is correct
+- Check provider is in `ALLOWED_PROVIDERS`
+- Test API key with curl
+- Review `LLM_ORDER` fallback configuration
+
+## Related Documentation
+
+- [User Management](/admin/user-management)
+- [Multi-Tenant Architecture](/admin/multi-tenant)
+- [Backup & Restore](/admin/backup-restore)

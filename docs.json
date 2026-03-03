@@ -1,122 +1,152 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "VIGIA",
+  "theme": "linden",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0066CC",
+    "light": "#4D94FF",
+    "dark": "#004C99"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/LuisCastilloCruz/VIGIA"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/LuisCastilloCruz/VIGIA"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Features",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "features/icsr-management",
+              "features/adverse-event-reporting",
+              "features/ips-reports",
+              "features/surveillance",
+              "features/document-management"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "User Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "guides/case-intake",
+              "guides/case-evaluation",
+              "guides/causality-assessment",
+              "guides/followup-management",
+              "guides/generating-reports"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Modules",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "modules/ingestion",
+              "modules/ocr-nlp",
+              "modules/training",
+              "modules/audit-trail",
+              "modules/bibliographic-search"
+            ]
+          },
+          {
+            "group": "Regulatory",
+            "pages": [
+              "regulatory/digemid",
+              "regulatory/fda",
+              "regulatory/ema",
+              "regulatory/vigiaccess"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "admin/user-management",
+              "admin/multi-tenant",
+              "admin/configuration",
+              "admin/backup-restore"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Authentication",
             "pages": [
-              "api-reference/introduction"
+              "api/authentication/overview",
+              "api/authentication/login",
+              "api/authentication/permissions"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "ICSR",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/icsr/overview",
+              "api/icsr/create-case",
+              "api/icsr/list-cases",
+              "api/icsr/update-case",
+              "api/icsr/events",
+              "api/icsr/followup"
+            ]
+          },
+          {
+            "group": "IPS Reports",
+            "pages": [
+              "api/ips/overview",
+              "api/ips/create-report",
+              "api/ips/calendar",
+              "api/ips/data-sources"
+            ]
+          },
+          {
+            "group": "Document Management",
+            "pages": [
+              "api/documents/overview",
+              "api/documents/upload",
+              "api/documents/signatures",
+              "api/documents/export"
+            ]
+          },
+          {
+            "group": "Surveillance",
+            "pages": [
+              "api/surveillance/overview",
+              "api/surveillance/schedule",
+              "api/surveillance/global-sources"
+            ]
+          },
+          {
+            "group": "OCR & NLP",
+            "pages": [
+              "api/ocr/process-document",
+              "api/nlp/extract-data",
+              "api/nlp/translate"
+            ]
+          },
+          {
+            "group": "Products & MedDRA",
+            "pages": [
+              "api/products/overview",
+              "api/meddra/search",
+              "api/icd11/search"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

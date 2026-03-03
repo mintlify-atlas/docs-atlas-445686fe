@@ -1,0 +1,558 @@
+---
+title: 'Create ICSR Case'
+api: 'POST /api/v1/icsr'
+description: 'Create a new Individual Case Safety Report with patient, product, and event information'
+---
+
+## Endpoint
+
+```
+POST /api/v1/icsr
+```
+
+## Authentication
+
+Requires permission: `icsr:create`
+
+## Request Body
+
+### Required Fields
+
+<ParamField body="paciente_iniciales" type="string" required>
+  Patient initials (e.g., "JD" for John Doe)
+</ParamField>
+
+<ParamField body="paciente_edad" type="integer" required>
+  Patient age in years
+</ParamField>
+
+<ParamField body="paciente_sexo" type="string" required>
+  Patient sex: "M" (male), "F" (female), or "O" (other)
+</ParamField>
+
+<ParamField body="reportante_nombre" type="string" required>
+  Name of the person reporting the adverse event
+</ParamField>
+
+<ParamField body="producto_sospechoso" type="string" required>
+  Name of the suspected product causing the adverse event
+</ParamField>
+
+<ParamField body="descripcion_evento" type="string" required>
+  Detailed narrative description of the adverse event
+</ParamField>
+
+### Patient Information
+
+<ParamField body="paciente_peso" type="number">
+  Patient weight in kilograms
+</ParamField>
+
+<ParamField body="paciente_dni" type="string">
+  Patient identification document number. Aliases: `dni`, `doc_identidad`, `documento_identidad`
+</ParamField>
+
+<ParamField body="paciente_fecha_nacimiento" type="string" format="date">
+  Patient date of birth (ISO format: YYYY-MM-DD)
+</ParamField>
+
+<ParamField body="paciente_grupo_etareo" type="string">
+  Age group classification (e.g., "Adulto", "Pediátrico", "Geriátrico")
+</ParamField>
+
+<ParamField body="paciente_diagnostico_principal" type="string">
+  Primary medical diagnosis
+</ParamField>
+
+<ParamField body="paciente_cie10" type="string">
+  ICD-10 diagnosis code
+</ParamField>
+
+<ParamField body="paciente_comorbilidades" type="string">
+  Comorbidities and relevant medical history
+</ParamField>
+
+<ParamField body="paciente_gestacion_meses_raw" type="string">
+  Pregnancy status in months. Accepts numeric values, "No aplica", or "Desconocido"
+</ParamField>
+
+### Reporter Information
+
+<ParamField body="reportante_contacto" type="string">
+  Reporter contact information (phone or email). System will auto-detect and populate `reportante_email` or `reportante_telefono` fields.
+</ParamField>
+
+<ParamField body="reportante_email" type="string">
+  Reporter email address
+</ParamField>
+
+<ParamField body="reportante_telefono" type="string">
+  Reporter phone number
+</ParamField>
+
+<ParamField body="reportante_ocupacion" type="string">
+  Reporter occupation/profession
+</ParamField>
+
+### Event Information
+
+<ParamField body="fecha_inicio_evento" type="string" format="date">
+  Date when the adverse event started. Aliases: `fecha_inicio`, `ea_fecha_inicio`, `evento_fecha_inicio`
+</ParamField>
+
+<ParamField body="fecha_fin_evento" type="string" format="date">
+  Date when the adverse event resolved. Aliases: `fecha_fin`, `ea_fecha_fin`, `evento_fecha_fin`
+</ParamField>
+
+<ParamField body="gravedad" type="string">
+  Event severity classification (e.g., "Grave", "No grave")
+</ParamField>
+
+<ParamField body="ea_causalidad" type="string">
+  Causality assessment. Alias: `causalidad`
+</ParamField>
+
+<ParamField body="ea_desenlace" type="string">
+  Event outcome. Alias: `desenlace`. Common values: "Recuperado", "En recuperación", "Secuelas", "Muerte", "Desconocido"
+</ParamField>
+
+<ParamField body="ea_grave_solo_ram" type="boolean">
+  Whether the event is serious only due to the adverse reaction
+</ParamField>
+
+### Case Metadata
+
+<ParamField body="estado" type="string">
+  Case status (e.g., "Pendiente", "En progreso", "Cerrado")
+</ParamField>
+
+<ParamField body="numero" type="string">
+  Case number or identifier
+</ParamField>
+
+<ParamField body="tipo_notificacion" type="string">
+  Notification type (e.g., "Inicial", "Seguimiento")
+</ParamField>
+
+<ParamField body="fuente_notificacion" type="string">
+  Source of notification (e.g., "Profesional de salud", "Paciente", "Farmacéutico")
+</ParamField>
+
+<ParamField body="doc_fuente_url" type="string">
+  URL to source document or attachment
+</ParamField>
+
+<ParamField body="codigo_interno_lab" type="string">
+  Laboratory internal code
+</ParamField>
+
+<ParamField body="cenafyt_codigo" type="string">
+  CENAFYT reference code
+</ParamField>
+
+### Product Arrays
+
+<ParamField body="productos" type="array">
+  Array of suspected products. Each product includes:
+  
+  <Expandable title="Product Object Schema">
+    <ParamField body="nombre_producto" type="string" required>
+      Product name
+    </ParamField>
+    
+    <ParamField body="ifa" type="string">
+      Active pharmaceutical ingredient (API/IFA)
+    </ParamField>
+    
+    <ParamField body="forma_farmaceutica" type="string">
+      Pharmaceutical form (e.g., "Tableta", "Jarabe", "Inyectable")
+    </ParamField>
+    
+    <ParamField body="laboratorio_pais" type="string">
+      Manufacturer/laboratory and country. Aliases: `fabricante_pais`, `fabricantePais`, `pais_fabricante`
+    </ParamField>
+    
+    <ParamField body="registro_sanitario" type="string">
+      Sanitary registration number. Alias: `registroSanitario`
+    </ParamField>
+    
+    <ParamField body="nro_lote" type="string">
+      Batch/lot number. Alias: `lote`
+    </ParamField>
+    
+    <ParamField body="via_administracion" type="string">
+      Route of administration. Alias: `via`
+    </ParamField>
+    
+    <ParamField body="dosis_frecuencia" type="string">
+      Dosage and frequency (e.g., "500mg cada 8 horas")
+    </ParamField>
+    
+    <ParamField body="fecha_inicio" type="string" format="date">
+      Product start date
+    </ParamField>
+    
+    <ParamField body="fecha_fin" type="string" format="date">
+      Product end date
+    </ParamField>
+    
+    <ParamField body="desaparecio_al_suspender" type="string">
+      Did the event resolve upon discontinuation? Values: "si", "no", "no_aplica"
+    </ParamField>
+    
+    <ParamField body="desaparecio_al_disminuir_dosis" type="string">
+      Did the event resolve with dose reduction? Values: "si", "no", "no_aplica"
+    </ParamField>
+    
+    <ParamField body="reaparecio_reexposicion" type="string">
+      Did the event recur upon rechallenge? Values: "si", "no", "no_aplica"
+    </ParamField>
+    
+    <ParamField body="antecedente_reaccion" type="string">
+      History of previous reaction? Values: "si", "no", "no_aplica"
+    </ParamField>
+    
+    <ParamField body="paciente_recibio_tratamiento_ram" type="string">
+      Did patient receive treatment for the adverse reaction? Values: "si", "no", "no_aplica"
+    </ParamField>
+    
+    <ParamField body="detalle_tratamiento_ram" type="string">
+      Treatment details. Alias: `detalle_tratamiento`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="concomitantes" type="array">
+  Array of concomitant medications. Each entry includes:
+  
+  <Expandable title="Concomitant Medication Schema">
+    <ParamField body="nombre_producto" type="string" required>
+      Product name
+    </ParamField>
+    
+    <ParamField body="dosis_frecuencia" type="string">
+      Dosage and frequency
+    </ParamField>
+    
+    <ParamField body="nro_lote" type="string">
+      Batch number
+    </ParamField>
+    
+    <ParamField body="via_administracion" type="string">
+      Route of administration. Alias: `via`
+    </ParamField>
+    
+    <ParamField body="fecha_inicio" type="string" format="date">
+      Start date
+    </ParamField>
+    
+    <ParamField body="fecha_fin" type="string" format="date">
+      End date
+    </ParamField>
+    
+    <ParamField body="motivo_prescripcion" type="string">
+      Reason for prescription. Alias: `motivo`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="seguimientos" type="array">
+  Array of followup entries. Alias: `seguimiento`, `seguimiento_items`. Each entry includes:
+  
+  <Expandable title="Followup Entry Schema">
+    <ParamField body="numero" type="integer">
+      Followup number/sequence
+    </ParamField>
+    
+    <ParamField body="fecha" type="string" format="date">
+      Followup date
+    </ParamField>
+    
+    <ParamField body="comentarios" type="string">
+      Followup comments/notes
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Timeline Fields
+
+<ParamField body="lt_fecha_recibido_colaborador" type="string" format="date">
+  Date received by collaborator
+</ParamField>
+
+<ParamField body="lt_fecha_recibido_ufv" type="string" format="date">
+  Date received by pharmacovigilance unit (UFV)
+</ParamField>
+
+<ParamField body="lt_dias_colab_ufv" type="integer">
+  Days between collaborator receipt and UFV receipt
+</ParamField>
+
+<ParamField body="lt_fecha_limite_digemid" type="string" format="date">
+  DIGEMID submission deadline. Alias: `lt_fecha_limite_envio_digemid`
+</ParamField>
+
+<ParamField body="lt_fecha_envio_digemid" type="string" format="date">
+  Actual DIGEMID submission date
+</ParamField>
+
+<ParamField body="lt_dias_ufv_digemid" type="integer">
+  Days between UFV receipt and DIGEMID submission
+</ParamField>
+
+<ParamField body="lt_comentarios_no_sometimiento" type="string">
+  Comments if not submitted to DIGEMID
+</ParamField>
+
+<ParamField body="lt_problemas_adicionales" type="string">
+  Additional timeline problems or notes
+</ParamField>
+
+### Quality Control
+
+<ParamField body="qc_realizado_por" type="string">
+  QC performed by (user/reviewer name). Alias: `cc_realizado_por`
+</ParamField>
+
+<ParamField body="qc_fecha" type="string" format="date">
+  QC date
+</ParamField>
+
+<ParamField body="revision_senales" type="string">
+  Signal detection review notes
+</ParamField>
+
+<ParamField body="comentarios_adicionales" type="string">
+  Additional comments
+</ParamField>
+
+### Followup Settings
+
+<ParamField body="seg_contactar_paciente" type="boolean">
+  Whether patient wishes to be contacted. Alias: `paciente_desea_contacto`
+</ParamField>
+
+<ParamField body="seg_adicional_fecha" type="string" format="date">
+  Additional followup date
+</ParamField>
+
+<ParamField body="seg_adicional_comentarios" type="string">
+  Additional followup comments
+</ParamField>
+
+<ParamField body="seg_adicional_estado" type="string">
+  Additional followup status
+</ParamField>
+
+## Response
+
+<ResponseField name="id" type="integer">
+  Unique ICSR identifier assigned by the system
+</ResponseField>
+
+<ResponseField name="created_at" type="string" format="datetime">
+  Timestamp when the case was created
+</ResponseField>
+
+<ResponseField name="paciente_iniciales" type="string">
+  Patient initials
+</ResponseField>
+
+<ResponseField name="paciente_edad" type="integer">
+  Patient age
+</ResponseField>
+
+<ResponseField name="producto_sospechoso" type="string">
+  Suspected product
+</ResponseField>
+
+<ResponseField name="descripcion_evento" type="string">
+  Event description
+</ResponseField>
+
+<ResponseField name="productos" type="array">
+  Array of product objects with `id` field added
+</ResponseField>
+
+<ResponseField name="concomitantes" type="array">
+  Array of concomitant medication objects with `id` field added
+</ResponseField>
+
+<ResponseField name="seguimientos" type="array">
+  Array of followup objects with `id` field added
+</ResponseField>
+
+<ResponseField name="eventos" type="array">
+  Array of adverse event objects (initially empty for new cases)
+</ResponseField>
+
+## Behavior
+
+### Auto-Processing
+
+When a new ICSR is created:
+
+1. **Contact Auto-Detection**: If `reportante_contacto` contains "@", it's copied to `reportante_email`. Otherwise, it's copied to `reportante_telefono`.
+
+2. **Internal Notifications**: Configured users receive email notification based on environment variables:
+   - `ICSR_NOTIFY_CARGOS` - Job titles to notify
+   - `ICSR_NOTIFY_AREAS` - Department areas to notify
+   - `ICSR_NOTIFY_EMAILS` - Additional email addresses
+
+3. **Missing Data Auto-Reply**: If reporter email is available and required fields are missing, an automatic followup email is sent requesting additional information.
+
+4. **Duplicate Detection**: Background duplicate detection runs automatically comparing against existing cases.
+
+### Validation
+
+The API validates:
+- Required fields are present
+- Data types match schema
+- Date formats are ISO-8601 (YYYY-MM-DD)
+- Nested arrays contain valid objects
+- Field lengths don't exceed limits
+
+## Example Request
+
+```json
+{
+  "paciente_iniciales": "JD",
+  "paciente_edad": 45,
+  "paciente_sexo": "M",
+  "paciente_peso": 72.5,
+  "paciente_dni": "12345678",
+  "paciente_fecha_nacimiento": "1978-03-15",
+  "reportante_nombre": "Dr. Maria Garcia",
+  "reportante_email": "mgarcia@hospital.com",
+  "reportante_ocupacion": "Médico",
+  "producto_sospechoso": "Amoxicilina 500mg",
+  "descripcion_evento": "Paciente desarrolló rash eritematoso generalizado 3 días después de iniciar tratamiento con amoxicilina para infección respiratoria. El rash fue pruriginoso y se resolvió 48 horas después de suspender el antibiótico.",
+  "fecha_inicio_evento": "2024-01-15",
+  "fecha_fin_evento": "2024-01-18",
+  "gravedad": "No grave",
+  "ea_causalidad": "Probable",
+  "ea_desenlace": "Recuperado",
+  "estado": "Pendiente",
+  "tipo_notificacion": "Inicial",
+  "fuente_notificacion": "Profesional de salud",
+  "productos": [
+    {
+      "nombre_producto": "Amoxicilina",
+      "ifa": "Amoxicilina trihidratada",
+      "forma_farmaceutica": "Tableta",
+      "laboratorio_pais": "Laboratorio ABC - Perú",
+      "registro_sanitario": "EE-123456",
+      "nro_lote": "LOT2024-001",
+      "via_administracion": "Oral",
+      "dosis_frecuencia": "500mg cada 8 horas",
+      "fecha_inicio": "2024-01-12",
+      "fecha_fin": "2024-01-16",
+      "desaparecio_al_suspender": "si",
+      "reaparecio_reexposicion": "no_aplica"
+    }
+  ],
+  "concomitantes": [
+    {
+      "nombre_producto": "Paracetamol",
+      "dosis_frecuencia": "500mg PRN",
+      "via_administracion": "Oral",
+      "motivo_prescripcion": "Fiebre"
+    }
+  ]
+}
+```
+
+## Example Response
+
+```json
+{
+  "id": 1234,
+  "created_at": "2024-01-20T10:30:00Z",
+  "paciente_iniciales": "JD",
+  "paciente_edad": 45,
+  "paciente_sexo": "M",
+  "paciente_peso": 72.5,
+  "paciente_dni": "12345678",
+  "paciente_fecha_nacimiento": "1978-03-15",
+  "reportante_nombre": "Dr. Maria Garcia",
+  "reportante_email": "mgarcia@hospital.com",
+  "reportante_ocupacion": "Médico",
+  "producto_sospechoso": "Amoxicilina 500mg",
+  "descripcion_evento": "Paciente desarrolló rash eritematoso generalizado...",
+  "fecha_inicio_evento": "2024-01-15",
+  "fecha_fin_evento": "2024-01-18",
+  "gravedad": "No grave",
+  "ea_causalidad": "Probable",
+  "ea_desenlace": "Recuperado",
+  "estado": "Pendiente",
+  "tipo_notificacion": "Inicial",
+  "fuente_notificacion": "Profesional de salud",
+  "productos": [
+    {
+      "id": 5678,
+      "nombre_producto": "Amoxicilina",
+      "ifa": "Amoxicilina trihidratada",
+      "forma_farmaceutica": "Tableta",
+      "laboratorio_pais": "Laboratorio ABC - Perú",
+      "registro_sanitario": "EE-123456",
+      "nro_lote": "LOT2024-001",
+      "via_administracion": "Oral",
+      "dosis_frecuencia": "500mg cada 8 horas",
+      "fecha_inicio": "2024-01-12",
+      "fecha_fin": "2024-01-16",
+      "desaparecio_al_suspender": "si",
+      "reaparecio_reexposicion": "no_aplica"
+    }
+  ],
+  "concomitantes": [
+    {
+      "id": 9012,
+      "nombre_producto": "Paracetamol",
+      "dosis_frecuencia": "500mg PRN",
+      "via_administracion": "Oral",
+      "motivo_prescripcion": "Fiebre"
+    }
+  ],
+  "seguimientos": [],
+  "eventos": []
+}
+```
+
+## Error Responses
+
+### 400 Bad Request
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "paciente_iniciales"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
+}
+```
+
+### 401 Unauthorized
+
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+### 403 Forbidden
+
+```json
+{
+  "detail": "Permission denied: icsr:create required"
+}
+```
+
+## Notes
+
+- The system automatically creates audit log entries for case creation
+- Duplicate detection runs asynchronously and doesn't block case creation
+- Internal codes can be auto-generated using `/api/v1/icsr/codigo-interno/next`
+- Product registration data is automatically enriched from the product catalog if `registro_sanitario` matches an existing product

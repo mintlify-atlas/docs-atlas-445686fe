@@ -1,0 +1,171 @@
+---
+title: 'Authentication Overview'
+description: 'Learn how to authenticate with the VIGIA API using JWT tokens and role-based access control'
+---
+
+## Overview
+
+The VIGIA API uses JWT (JSON Web Token) based authentication with role-based access control (RBAC) and multi-tenancy support. All authenticated endpoints require a valid bearer token in the Authorization header.
+
+## Authentication Flow
+
+1. **Login**: Send credentials to `/api/v1/auth/login` to receive a JWT token
+2. **Token Storage**: Store the token securely on the client side
+3. **API Requests**: Include the token in the Authorization header for all protected endpoints
+4. **Token Refresh**: Tokens expire after 480 minutes (8 hours) by default
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+    
+    Client->>API: POST /auth/login (credentials)
+    API->>Database: Validate user
+    Database-->>API: User data + roles
+    API-->>Client: JWT token + user info
+    Client->>API: GET /protected (Authorization: Bearer token)
+    API->>API: Validate token
+    API-->>Client: Protected resource
+```
+
+## Multi-Tenant Architecture
+
+VIGIA supports multi-tenant authentication using the `X-Tenant` header. Each tenant has isolated data and users.
+
+<Info>
+If no `X-Tenant` header is provided, the system falls back to the legacy tenant mode.
+</Info>
+
+### Tenant Header
+
+```http
+X-Tenant: customer-subdomain
+```
+
+The tenant identifier is embedded in the JWT token and validated on each request.
+
+## Token Structure
+
+JWT tokens issued by VIGIA contain the following claims:
+
+| Claim | Type | Description |
+|-------|------|-------------|
+| `sub` | string | User ID (string representation) |
+| `uid` | integer | User ID (numeric) |
+| `username` | string | Username |
+| `email` | string | User email address |
+| `role` | string | Primary role (e.g., "admin", "qf") |
+| `roles` | array | All assigned roles |
+| `tenant` | string | Tenant identifier |
+| `trace` | string | Request trace ID for logging |
+| `exp` | integer | Expiration timestamp |
+
+## Available Roles
+
+VIGIA uses a predefined set of roles for access control:
+
+- **admin**: Full system access, administrative privileges
+- **qf**: Qualified Person (Farmacovigilancia)
+- **responsable_fv**: Pharmacovigilance Manager
+- **qa**: Quality Assurance
+- **direccion_tecnica**: Technical Director
+- **legal**: Legal Department
+- **soporte**: Support/Help Desk
+
+<Note>
+Users must have at least one role assigned to authenticate successfully. The system automatically selects "admin" as the primary role if present, otherwise uses the first role in the list.
+</Note>
+
+## Security Headers
+
+### Required Headers for All Authenticated Requests
+
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+X-Tenant: customer-subdomain
+```
+
+### Optional Headers
+
+```http
+X-Request-ID: unique-request-identifier
+X-Trace-ID: trace-identifier-for-logging
+```
+
+## Token Expiration
+
+Tokens expire after **480 minutes (8 hours)** by default. When a token expires, clients receive a `401 Unauthorized` response and must re-authenticate.
+
+## Password Requirements
+
+- Minimum length: 6 characters
+- Stored using bcrypt hashing algorithm
+- Password changes require current password verification
+
+## Error Responses
+
+All authentication endpoints return standard error responses:
+
+### 401 Unauthorized
+
+```json
+{
+  "detail": "Credenciales inválidas"
+}
+```
+
+Returned when:
+- Invalid credentials provided
+- Token is invalid or malformed
+- User not found
+
+### 403 Forbidden
+
+```json
+{
+  "detail": "Usuario inactivo"
+}
+```
+
+Returned when:
+- User account is inactive
+- User has no roles assigned
+
+### 422 Unprocessable Entity
+
+```json
+{
+  "detail": "Usuario y contraseña requeridos"
+}
+```
+
+Returned when:
+- Required fields are missing
+- Password is too short (< 6 characters)
+
+## Rate Limiting
+
+<Warning>
+Implement rate limiting on the client side to prevent account lockouts. Excessive failed login attempts may trigger security measures.
+</Warning>
+
+## Best Practices
+
+1. **Store tokens securely**: Use httpOnly cookies or secure storage mechanisms
+2. **Never expose tokens**: Don't log tokens or include them in URLs
+3. **Use HTTPS**: Always use encrypted connections in production
+4. **Implement token refresh**: Refresh tokens before expiration for seamless UX
+5. **Handle 401 responses**: Redirect to login when tokens expire
+6. **Validate tenant context**: Always include the correct X-Tenant header
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Login Endpoint" icon="right-to-bracket" href="/api/authentication/login">
+    Learn how to authenticate and obtain JWT tokens
+  </Card>
+  <Card title="Permissions" icon="shield-check" href="/api/authentication/permissions">
+    Understand role-based access control
+  </Card>
+</CardGroup>

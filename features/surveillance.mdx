@@ -1,0 +1,420 @@
+---
+title: "Surveillance"
+description: "Global pharmacovigilance monitoring across FDA, EMA, DIGEMID, and VigiAccess with automated alerts and reporting"
+---
+
+## Overview
+
+VIGIA's Surveillance module provides comprehensive monitoring of global pharmacovigilance databases and regulatory agencies, enabling early detection of safety signals and regulatory actions.
+
+<CardGroup cols={2}>
+  <Card title="Multi-Source Monitoring" icon="satellite-dish">
+    FDA, EMA, DIGEMID Peru, VigiAccess WHO
+  </Card>
+  <Card title="Scheduled Scraping" icon="clock">
+    Automated data collection with configurable CRON schedules
+  </Card>
+  <Card title="Smart Filtering" icon="filter">
+    Filter by severity, medication, date ranges, and keywords
+  </Card>
+  <Card title="Automated Reports" icon="envelope">
+    Weekly email reports in PDF, CSV, XLSX, or HTML
+  </Card>
+</CardGroup>
+
+## Surveillance Scopes
+
+VIGIA separates surveillance into two scopes:
+
+| Scope | Description | Sources |
+|-------|-------------|----------|
+| **National** | Domestic regulatory monitoring | DIGEMID (Peru), national health authorities |
+| **External** | International monitoring | FDA, EMA, VigiAccess, Health Canada, MHRA |
+
+<Note>
+Each scope has independent configuration for sources, schedules, and recipients.
+</Note>
+
+## Data Sources
+
+### Configuring Sources
+
+```bash
+GET /api/v1/surveillance/sources?scope=national
+```
+
+**Response:**
+```json
+{
+  "sources": [
+    {
+      "id": "uuid-1234",
+      "name": "DIGEMID Alertas",
+      "url": "https://www.digemid.minsa.gob.pe/alertas",
+      "enabled": true
+    },
+    {
+      "id": "uuid-5678",
+      "name": "DIGEMID RAM",
+      "url": "https://www.digemid.minsa.gob.pe/ram",
+      "enabled": false
+    }
+  ]
+}
+```
+
+### Update Sources
+
+```bash
+POST /api/v1/surveillance/sources?scope=external
+Content-Type: application/json
+
+{
+  "sources": [
+    {
+      "name": "FDA Drug Safety",
+      "url": "https://www.fda.gov/drugs/drug-safety-and-availability",
+      "enabled": true
+    },
+    {
+      "name": "EMA Safety Updates",
+      "url": "https://www.ema.europa.eu/en/human-regulatory/post-authorisation/pharmacovigilance",
+      "enabled": true
+    },
+    {
+      "name": "VigiAccess",
+      "url": "http://www.vigiaccess.org/",
+      "enabled": true
+    }
+  ]
+}
+```
+
+<Warning>
+When updating sources, the entire list is replaced. Include all sources you want to keep active.
+</Warning>
+
+## Automated Scraping
+
+### Scraping Schedule
+
+Configure CRON-based automatic scraping:
+
+```bash
+GET /api/v1/surveillance/schedule?scope=national
+```
+
+**Response:**
+```json
+{
+  "cron": "0 9 * * MON",
+  "next_run_iso": "2024-03-11T09:00:00+00:00"
+}
+```
+
+### Update Schedule
+
+```bash
+POST /api/v1/surveillance/schedule?scope=external
+Content-Type: application/json
+
+{
+  "cron": "0 9 * * MON,THU",
+  "next_run_iso": "2024-03-07T09:00:00-05:00"
+}
+```
+
+**Common CRON Patterns:**
+- `0 9 * * MON`: Every Monday at 9:00 AM
+- `0 9 * * MON,THU`: Monday and Thursday at 9:00 AM
+- `0 */6 * * *`: Every 6 hours
+- `0 9 1 * *`: First day of each month at 9:00 AM
+
+<Note>
+**Timezone**: Schedules run in `America/Lima` timezone by default.
+</Note>
+
+### Manual Run
+
+Trigger immediate scraping:
+
+```bash
+POST /api/v1/surveillance/run?scope=national
+```
+
+Scrapes all enabled sources and returns:
+
+```json
+{
+  "ok": true,
+  "results": {
+    "uuid-1234": {
+      "items_found": 15,
+      "items_new": 3,
+      "source": "DIGEMID Alertas"
+    },
+    "uuid-5678": {
+      "error": "Connection timeout"
+    }
+  }
+}
+```
+
+## Surveillance Items
+
+Each scraped item contains:
+
+```python
+# Model: backend/app/models/surveillance.py:20-34
+class SurveillanceItem:
+    - fuente: Source name (FDA, EMA, etc.)
+    - titulo: Alert/announcement title
+    - medicamento: Drug/product name
+    - evento: Adverse event or safety issue
+    - severidad: Severity (Alta, Media, Baja)
+    - tendencia: Trend (Aumentando, Estable, Disminuyendo)
+    - url: Source URL
+    - fecha: Item date/time
+    - fecha_publicada: Published date
+    - scope: national or external
+```
+
+### Severity Levels
+
+| Severidad | Criteria | Example |
+|-----------|----------|----------|
+| **Alta** | Death, hospitalization, recall | "FDA recalls drug due to contamination" |
+| **Media** | Serious ADR, label change | "New black box warning for hepatotoxicity" |
+| **Baja** | Minor ADR, information update | "Updated administration guidelines" |
+
+## Querying Results
+
+### Basic Search
+
+```bash
+GET /api/v1/surveillance/results?scope=external&limit=20&offset=0
+```
+
+### Advanced Filtering
+
+```bash
+GET /api/v1/surveillance/results?
+  scope=national&
+  query=paracetamol&
+  severity=Alta&
+  medicamento=PARACETAMOL&
+  date_from=2024-01-01&
+  date_to=2024-03-31&
+  limit=50
+```
+
+**Filter Parameters:**
+- `query`: Full-text search across title, medication, event
+- `severity`: Filter by severity level
+- `medicamento`: Exact or partial medication name
+- `date_from` / `date_to`: Date range (ISO 8601 format)
+- `scope`: `national` or `external`
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "item-uuid-1",
+      "fuente": "FDA",
+      "titulo": "FDA warns of liver injury risk with acetaminophen",
+      "medicamento": "Acetaminophen",
+      "evento": "Hepatotoxicity",
+      "severidad": "Alta",
+      "tendencia": "Aumentando",
+      "url": "https://www.fda.gov/...",
+      "fecha": "2024-03-01T14:30:00Z",
+      "fecha_publicada": "2024-03-01T10:00:00Z"
+    }
+  ],
+  "total": 145,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+## Automated Reports
+
+### Send Weekly Reports
+
+Generate and email surveillance reports:
+
+```bash
+POST /api/v1/surveillance/send-reports
+Content-Type: application/json
+
+{
+  "scope": "external",
+  "recipients": [
+    "pharmacovigilance@company.com",
+    "medical.director@company.com"
+  ],
+  "inline": true,
+  "pdf": true,
+  "csv": false,
+  "xlsx": true,
+  "filters": {
+    "severity": "Alta",
+    "date_from": "2024-02-26",
+    "date_to": "2024-03-03"
+  },
+  "title": "VIGIA - Vigilancia Internacional Semanal"
+}
+```
+
+**Options:**
+- `inline`: Include HTML table in email body
+- `pdf`: Attach PDF report
+- `csv`: Attach CSV export
+- `xlsx`: Attach Excel spreadsheet
+- `filters`: Apply filters (optional, defaults to last week)
+
+**Response:**
+```json
+{
+  "ok": true,
+  "sent_to": ["pharmacovigilance@company.com", "medical.director@company.com"],
+  "attachments": ["surveillance_report.pdf", "surveillance_report.xlsx"],
+  "inline": true,
+  "count": 23,
+  "applied_filters": {
+    "severity": "Alta",
+    "date_from": "2024-02-26T05:00:00+00:00",
+    "date_to": "2024-03-03T04:59:59+00:00",
+    "defaulted_to_last_week": false,
+    "scope": "external"
+  }
+}
+```
+
+<Note>
+**Default behavior**: If no date filters provided, reports default to the previous ISO week (Monday-Sunday).
+</Note>
+
+## Integration with ICSR
+
+Surveillance items can trigger ICSR creation:
+
+<Steps>
+  <Step title="Detect Signal">
+    Surveillance identifies new safety signal from FDA
+  </Step>
+  
+  <Step title="Review Alert">
+    Pharmacovigilance team reviews the alert details
+  </Step>
+  
+  <Step title="Create ICSR (if applicable)">
+    If the signal affects company products, create ICSR for investigation
+  </Step>
+  
+  <Step title="Document in IPS">
+    Include surveillance finding in next IPS report under "Regulatory Actions"
+  </Step>
+</Steps>
+
+## VigiAccess Integration
+
+Special integration with WHO VigiAccess database:
+
+```bash
+# VigiAccess specific endpoints
+GET /api/v1/vigiaccess/search?drug=paracetamol&reaction=hepatotoxicity
+
+GET /api/v1/vigiaccess/dashboard?product_id=123
+```
+
+**Features:**
+- Global ADR statistics from 150+ countries
+- Comparative analysis across regions
+- Temporal trend analysis
+- Dashboard visualization
+
+**Source:** `backend/app/routers/vigiaccess.py`, `backend/app/routers/vigiaccess_dashboard.py`
+
+## API Endpoints Summary
+
+### Configuration
+
+```bash
+# Get sources
+GET /api/v1/surveillance/sources?scope={national|external}
+
+# Update sources
+POST /api/v1/surveillance/sources?scope={national|external}
+
+# Get schedule
+GET /api/v1/surveillance/schedule?scope={national|external}
+
+# Update schedule
+POST /api/v1/surveillance/schedule?scope={national|external}
+```
+
+### Scraping
+
+```bash
+# Run now
+POST /api/v1/surveillance/run?scope={national|external}
+```
+
+### Results
+
+```bash
+# Get filtered results
+GET /api/v1/surveillance/results?
+  scope={scope}&
+  limit={int}&
+  offset={int}&
+  query={text}&
+  severity={Alta|Media|Baja}&
+  medicamento={name}&
+  date_from={YYYY-MM-DD}&
+  date_to={YYYY-MM-DD}
+```
+
+### Reports
+
+```bash
+# Send email reports
+POST /api/v1/surveillance/send-reports
+```
+
+## Code References
+
+| Feature | Implementation |
+|---------|---------------|
+| Models | `backend/app/models/surveillance.py:11-44` |
+| Router | `backend/app/routers/surveillance.py:1-300` |
+| Scraper Service | `backend/app/services/scraper.py` |
+| Report Generation | `backend/app/services/reports.py` |
+| Filters | `backend/app/services/report_filters.py` |
+| VigiAccess | `backend/app/routers/vigiaccess.py` |
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Source Management" icon="list-check">
+    - Enable only reliable, official sources
+    - Test new sources with manual run first
+    - Monitor scraper errors and adjust URLs
+    - Review source list quarterly
+  </Card>
+  
+  <Card title="Alert Management" icon="bell">
+    - Set up severity-based email filters
+    - Review high-severity alerts within 24h
+    - Document signal evaluation decisions
+    - Link alerts to ICSRs when creating reports
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [ICSR Management](/features/icsr-management) - Create cases from surveillance signals
+- [IPS Reports](/features/ips-reports) - Include regulatory actions in PSUR
+- [Adverse Event Reporting](/features/adverse-event-reporting) - Document signal-related events

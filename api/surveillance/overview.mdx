@@ -1,0 +1,401 @@
+---
+title: 'Surveillance API Overview'
+description: 'Monitor global pharmacovigilance databases and regulatory agencies with automated scraping, filtering, and reporting'
+icon: 'satellite-dish'
+---
+
+## Introduction
+
+The Surveillance API enables automated monitoring of multiple regulatory data sources including FDA, EMA, DIGEMID, and VigiAccess. Configure scheduled scraping, query results with advanced filters, and generate automated email reports.
+
+**Base Path:** `/api/v1/surveillance`
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Scope Architecture" icon="layer-group">
+    Separate national and external surveillance with independent configurations
+  </Card>
+  <Card title="Automated Scraping" icon="robot">
+    CRON-based scheduling with configurable data sources
+  </Card>
+  <Card title="Advanced Filtering" icon="filter">
+    Query by severity, medication, date range, and full-text search
+  </Card>
+  <Card title="Multi-Format Reports" icon="file-export">
+    Generate HTML, PDF, CSV, and XLSX reports via email
+  </Card>
+</CardGroup>
+
+## Surveillance Scopes
+
+VIGIA separates surveillance into two independent scopes:
+
+| Scope | Description | Use Case |
+|-------|-------------|----------|
+| `national` | Domestic regulatory monitoring | DIGEMID alerts, local health authorities |
+| `external` | International monitoring | FDA, EMA, VigiAccess, MHRA, Health Canada |
+
+<Note>
+Each scope maintains its own:
+- Data sources configuration
+- Scraping schedule (CRON expression)
+- Surveillance results
+- Report recipients
+</Note>
+
+## Authentication
+
+All surveillance endpoints require authentication and one of the following roles:
+
+```json
+{
+  "allowed_roles": [
+    "admin",
+    "qf",
+    "responsable_fv",
+    "qa",
+    "direccion_tecnica",
+    "legal",
+    "soporte"
+  ]
+}
+```
+
+**Header:**
+```bash
+Authorization: Bearer <your_jwt_token>
+```
+
+## Core Endpoints
+
+### Configuration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/surveillance/sources` | Get configured data sources for a scope |
+| `POST` | `/surveillance/sources` | Update data sources (replaces entire list) |
+| `GET` | `/surveillance/schedule` | Get scraping schedule for a scope |
+| `POST` | `/surveillance/schedule` | Configure CRON schedule |
+
+### Execution
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/surveillance/run` | Trigger immediate scraping (all enabled sources) |
+| `POST` | `/surveillance/run-and-send` | Scrape and email report |
+
+### Querying
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/surveillance/results` | Query surveillance items with filters |
+| `POST` | `/surveillance/send-reports` | Generate and email filtered reports |
+
+## Data Model
+
+### SurveillanceItem
+
+Each scraped item contains:
+
+```typescript
+interface SurveillanceItem {
+  id: string;                    // UUID
+  fuente: string;                // Source name (e.g., "FDA", "EMA", "DIGEMID")
+  titulo: string;                // Alert/announcement title
+  medicamento: string | null;    // Drug/device name
+  evento: string | null;         // Adverse event or safety issue description
+  severidad: string | null;      // Severity: "Alta" | "Media" | "Baja"
+  tendencia: string | null;      // Trend: "Aumentando" | "Estable" | "Disminuyendo"
+  url: string | null;            // Source URL
+  fecha: string | null;          // Item date/timestamp (ISO 8601)
+  fecha_publicada: string | null;// Publication date (ISO 8601)
+  scope: "national" | "external";// Surveillance scope
+}
+```
+
+**Example:**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "fuente": "FDA",
+  "titulo": "FDA advierte sobre riesgo de lesión hepática con acetaminofén",
+  "medicamento": "Acetaminofén",
+  "evento": "Hepatotoxicidad",
+  "severidad": "Alta",
+  "tendencia": "Aumentando",
+  "url": "https://www.fda.gov/drugs/drug-safety-and-availability/...",
+  "fecha": "2024-03-01T14:30:00Z",
+  "fecha_publicada": "2024-03-01T10:00:00Z",
+  "scope": "external"
+}
+```
+
+### Severity Levels
+
+| Severidad | Criteria | Examples |
+|-----------|----------|----------|
+| **Alta** | Death, hospitalization, product recall | Drug contamination, device malfunction causing injury |
+| **Media** | Serious ADR, label change, black box warning | New hepatotoxicity warning, dosage restrictions |
+| **Baja** | Minor ADR, information update | Updated administration guidelines |
+
+## Quick Start
+
+### 1. Configure Data Sources
+
+```bash
+POST /api/v1/surveillance/sources?scope=external
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "sources": [
+    {
+      "name": "FDA Drug Safety",
+      "url": "https://www.fda.gov/drugs/drug-safety-and-availability",
+      "enabled": true
+    },
+    {
+      "name": "EMA Safety Updates",
+      "url": "https://www.ema.europa.eu/en/human-regulatory/post-authorisation/pharmacovigilance",
+      "enabled": true
+    }
+  ]
+}
+```
+
+### 2. Set Up Schedule
+
+```bash
+POST /api/v1/surveillance/schedule?scope=external
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "cron": "0 9 * * MON,THU",
+  "next_run_iso": "2024-03-07T14:00:00Z"
+}
+```
+
+### 3. Query Results
+
+```bash
+GET /api/v1/surveillance/results?
+  scope=external&
+  severity=Alta&
+  date_from=2024-03-01&
+  date_to=2024-03-31&
+  limit=50
+```
+
+### 4. Send Reports
+
+```bash
+POST /api/v1/surveillance/send-reports?scope=external
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "recipients": ["pharmacovigilance@company.com"],
+  "formats": {
+    "inline": true,
+    "pdf": true,
+    "xlsx": true
+  },
+  "filters": {
+    "severity": "Alta"
+  }
+}
+```
+
+## Common Use Cases
+
+### Weekly High-Severity Monitoring
+
+```bash
+# 1. Configure weekly schedule
+POST /api/v1/surveillance/schedule?scope=external
+{
+  "cron": "0 9 * * MON"  # Every Monday at 9 AM
+}
+
+# 2. Set up automated high-severity alerts
+POST /api/v1/surveillance/send-reports?scope=external
+{
+  "recipients": ["medical.director@company.com"],
+  "formats": {"inline": true, "pdf": true},
+  "filters": {"severity": "Alta"}
+}
+```
+
+### Drug-Specific Surveillance
+
+```bash
+GET /api/v1/surveillance/results?
+  scope=external&
+  medicamento=Paracetamol&
+  date_from=2024-01-01&
+  limit=100
+```
+
+### On-Demand Scraping
+
+```bash
+# Scrape all enabled sources immediately
+POST /api/v1/surveillance/run?scope=national
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "results": {
+    "source-uuid-1": {
+      "items_found": 15,
+      "items_new": 3,
+      "source": "DIGEMID Alertas"
+    },
+    "source-uuid-2": {
+      "error": "Connection timeout"
+    }
+  }
+}
+```
+
+## Filtering & Search
+
+The `/results` endpoint supports multiple filters:
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|----------|
+| `scope` | string | `national` or `external` | `scope=external` |
+| `query` | string | Full-text search (title, medication, event) | `query=hepatotoxicity` |
+| `severity` | string | Filter by severity level | `severity=Alta` |
+| `medicamento` | string | Medication name (partial match) | `medicamento=Paracetamol` |
+| `date_from` | string | Start date (ISO 8601) | `date_from=2024-01-01` |
+| `date_to` | string | End date (ISO 8601) | `date_to=2024-03-31` |
+| `limit` | integer | Results per page (1-200) | `limit=50` |
+| `offset` | integer | Pagination offset | `offset=100` |
+
+**Example:**
+```bash
+GET /api/v1/surveillance/results?
+  scope=external&
+  query=cardiac&
+  severity=Alta&
+  date_from=2024-03-01&
+  limit=25&
+  offset=0
+```
+
+## Report Formats
+
+Generate reports in multiple formats:
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| **Inline HTML** | Embedded table in email body | Quick review in email client |
+| **PDF** | Formatted document | Archiving, regulatory submissions |
+| **CSV** | Comma-separated values | Data analysis, Excel import |
+| **XLSX** | Excel spreadsheet | Advanced filtering, pivot tables |
+
+```json
+{
+  "formats": {
+    "inline": true,   // HTML table in email
+    "pdf": true,      // Attach PDF
+    "csv": false,     // Skip CSV
+    "xlsx": true      // Attach Excel
+  }
+}
+```
+
+## Timezone Handling
+
+<Warning>
+**Important:** All CRON schedules execute in `America/Lima` timezone (UTC-5).
+</Warning>
+
+Dates in API responses use ISO 8601 format with UTC timezone:
+
+```json
+{
+  "fecha": "2024-03-01T14:30:00Z",
+  "fecha_publicada": "2024-03-01T10:00:00Z"
+}
+```
+
+When setting `next_run_iso`, you can provide any timezone—it will be converted:
+
+```json
+{
+  "cron": "0 9 * * MON",
+  "next_run_iso": "2024-03-07T09:00:00-05:00"  // Lima time
+}
+```
+
+## Error Handling
+
+### Common Error Codes
+
+| Status | Error | Cause |
+|--------|-------|-------|
+| `400` | Bad Request | Invalid filters, missing required fields |
+| `401` | Unauthorized | Missing or invalid JWT token |
+| `403` | Forbidden | User lacks required role |
+| `502` | Bad Gateway | Email service unavailable |
+
+**Example Error Response:**
+```json
+{
+  "detail": {
+    "message": "Fallo al enviar correo",
+    "error": "SMTPAuthenticationError: Username and Password not accepted",
+    "trace": "Traceback (most recent call last)...\n"
+  }
+}
+```
+
+## Rate Limits
+
+<Note>
+To prevent abuse, manual scraping (`/run`) is limited to:
+- **National scope:** Once per hour
+- **External scope:** Once every 2 hours
+
+Scheduled jobs are not subject to these limits.
+</Note>
+
+## Implementation References
+
+| Component | File Location |
+|-----------|---------------|
+| Router | `backend/app/routers/surveillance.py:29` |
+| Schemas | `backend/app/schemas/surveillance.py:1-87` |
+| Models | `backend/app/models/surveillance.py` |
+| CRUD Operations | `backend/app/crud/surveillance.py` |
+| Scraper Service | `backend/app/services/scraper.py` |
+| Report Generation | `backend/app/services/reports.py` |
+| Filter Builder | `backend/app/services/report_filters.py:27` |
+
+## Related APIs
+
+<CardGroup cols={3}>
+  <Card title="Schedule Management" icon="calendar" href="/api/surveillance/schedule">
+    Configure CRON-based scraping
+  </Card>
+  <Card title="Global Data Sources" icon="globe" href="/api/surveillance/global-sources">
+    Query FDA, EMA, DIGEMID directly
+  </Card>
+  <Card title="ICSR Integration" icon="file-medical" href="/api/icsr/overview">
+    Create cases from surveillance signals
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+1. **Configure Sources:** Set up national and external data sources
+2. **Test Scraping:** Run manual scrape to verify source accessibility
+3. **Set Schedule:** Configure automated scraping frequency
+4. **Query Results:** Test filtering and pagination
+5. **Setup Reports:** Configure weekly email reports for stakeholders

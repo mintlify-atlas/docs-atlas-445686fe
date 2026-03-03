@@ -1,0 +1,468 @@
+---
+title: 'Digital Signatures'
+description: 'Add and manage digital signatures with OTP verification for document authentication'
+icon: 'signature'
+---
+
+## Introduction
+
+The Digital Signatures API enables authenticated employees to create and manage their digital signature profiles, including signature images and organizational details. These signatures are used to authenticate pharmacovigilance documents and ICSR exports.
+
+## Base URL
+
+```
+/api/v1/firmas
+```
+
+## Authentication
+
+All signature endpoints require employee authentication. The system automatically links signatures to the authenticated employee's profile.
+
+```bash
+Authorization: Bearer <your_token>
+```
+
+---
+
+## Get My Signature Profile
+
+Retrieve the signature profile for the authenticated employee. Creates a default profile if none exists.
+
+<CodeGroup>
+```bash GET /api/v1/firmas/me
+curl -X GET https://api.vigia.com/api/v1/firmas/me \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```python Python
+import requests
+
+url = "https://api.vigia.com/api/v1/firmas/me"
+headers = {"Authorization": f"Bearer {token}"}
+
+response = requests.get(url, headers=headers)
+print(response.json())
+```
+</CodeGroup>
+
+### Response
+
+<ResponseField name="id" type="integer">
+  Unique signature profile ID
+</ResponseField>
+
+<ResponseField name="empleado_id" type="integer">
+  Associated employee ID
+</ResponseField>
+
+<ResponseField name="nombre" type="string">
+  Signer's full name
+</ResponseField>
+
+<ResponseField name="cargo" type="string">
+  Job title or position
+</ResponseField>
+
+<ResponseField name="company" type="string">
+  Company or organization name
+</ResponseField>
+
+<ResponseField name="telefono" type="string">
+  Phone number
+</ResponseField>
+
+<ResponseField name="celular" type="string">
+  Mobile phone number
+</ResponseField>
+
+<ResponseField name="email_alt" type="string">
+  Alternative email address
+</ResponseField>
+
+<ResponseField name="website" type="string">
+  Company website URL
+</ResponseField>
+
+<ResponseField name="logo_url" type="string">
+  URL to company logo image
+</ResponseField>
+
+<ResponseField name="firma_img_url" type="string">
+  URL to handwritten signature image
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "id": 1,
+  "empleado_id": 42,
+  "nombre": "Dr. Juan Pérez Ramírez",
+  "cargo": "Químico Farmacéutico - Responsable de Farmacovigilancia",
+  "company": "OTARVASQ S.A.C.",
+  "telefono": "+51-1-2345678",
+  "celular": "+51-987-654-321",
+  "email_alt": "juan.perez@otarvasq.com",
+  "website": "https://www.otarvasq.com",
+  "logo_url": "/uploads/firmas_42/logo.png",
+  "firma_img_url": "/uploads/firmas_42/firma.png",
+  "is_default": true,
+  "socials": null,
+  "html": null,
+  "ui_prefs": null
+}
+```
+
+---
+
+## Update Signature Profile
+
+Update signature profile information for the authenticated employee.
+
+<CodeGroup>
+```bash PUT /api/v1/firmas/{id}
+curl -X PUT https://api.vigia.com/api/v1/firmas/1 \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Dr. Juan Pérez Ramírez",
+    "cargo": "Químico Farmacéutico",
+    "company": "OTARVASQ S.A.C.",
+    "celular": "+51-987-654-321",
+    "email_alt": "juan.perez@otarvasq.com",
+    "website": "https://www.otarvasq.com"
+  }'
+```
+
+```python Python
+import requests
+
+url = "https://api.vigia.com/api/v1/firmas/1"
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json"
+}
+
+payload = {
+    "nombre": "Dr. Juan Pérez Ramírez",
+    "cargo": "Químico Farmacéutico",
+    "company": "OTARVASQ S.A.C.",
+    "celular": "+51-987-654-321",
+    "email_alt": "juan.perez@otarvasq.com",
+    "website": "https://www.otarvasq.com"
+}
+
+response = requests.put(url, headers=headers, json=payload)
+print(response.json())
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Signature profile ID (must belong to the authenticated employee)
+</ParamField>
+
+### Request Body
+
+All fields are optional. Only provided fields will be updated.
+
+<ParamField body="nombre" type="string">
+  Full name of the signer
+</ParamField>
+
+<ParamField body="cargo" type="string">
+  Job title or position
+</ParamField>
+
+<ParamField body="company" type="string">
+  Company or organization name
+</ParamField>
+
+<ParamField body="telefono" type="string">
+  Phone number
+</ParamField>
+
+<ParamField body="celular" type="string">
+  Mobile phone number
+</ParamField>
+
+<ParamField body="anexo" type="string">
+  Phone extension
+</ParamField>
+
+<ParamField body="email_alt" type="string">
+  Alternative email address
+</ParamField>
+
+<ParamField body="website" type="string">
+  Company website URL
+</ParamField>
+
+<ParamField body="address" type="string">
+  Physical address
+</ParamField>
+
+<ParamField body="logo_url" type="string">
+  URL to company logo (cleaned automatically)
+</ParamField>
+
+<ParamField body="firma_img_url" type="string">
+  URL to signature image (cleaned automatically)
+</ParamField>
+
+<ParamField body="socials" type="object">
+  Social media links (key-value pairs)
+</ParamField>
+
+<ParamField body="html" type="string">
+  Custom HTML signature template
+</ParamField>
+
+<ParamField body="is_default" type="boolean">
+  Whether this is the default signature
+</ParamField>
+
+<ParamField body="ui_prefs" type="object">
+  UI preferences for signature display
+</ParamField>
+
+### Response
+
+Returns the updated signature profile.
+
+---
+
+## Upload Signature Assets
+
+Upload signature image or company logo.
+
+<CodeGroup>
+```bash POST /api/v1/firmas/{id}/assets
+curl -X POST https://api.vigia.com/api/v1/firmas/1/assets \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "field=firma_img" \
+  -F "file=@/path/to/signature.png"
+```
+
+```python Python
+import requests
+
+url = "https://api.vigia.com/api/v1/firmas/1/assets"
+headers = {"Authorization": f"Bearer {token}"}
+
+files = {"file": open("signature.png", "rb")}
+data = {"field": "firma_img"}
+
+response = requests.post(url, headers=headers, files=files, data=data)
+print(response.json())
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Signature profile ID (must belong to authenticated employee)
+</ParamField>
+
+### Request Parameters
+
+<ParamField body="file" type="file" required>
+  Image file to upload (PNG, JPG, or other image formats)
+</ParamField>
+
+<ParamField body="field" type="string" required>
+  Asset type to upload:
+  - `"logo"`: Company logo
+  - `"firma_img"`: Handwritten signature image
+</ParamField>
+
+### Response
+
+Returns the updated signature profile with the new asset URL.
+
+### Storage
+
+Files are stored in:
+```
+uploads/firmas_{empleado_id}/
+```
+
+URLs are automatically cleaned to extract the `/uploads/` path.
+
+---
+
+## Signature Usage in Documents
+
+Signatures are automatically applied to documents in the following contexts:
+
+### ICSR Export with Signature
+
+When exporting ICSR reports to DIGEMID format, the signature profile of the authenticated user is embedded:
+
+```bash GET /api/v1/icsr/{icsr_id}/export/digemid
+curl -X GET "https://api.vigia.com/api/v1/icsr/123/export/digemid?formato=pdf" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -o icsr_report.pdf
+```
+
+The generated PDF includes:
+- Signer's name and job title
+- Handwritten signature image (`firma_img_url`)
+- Company logo (if configured)
+- Contact information (phone, email)
+- Company website
+
+### Signature Context in Exports
+
+The following fields from the signature profile are included:
+
+| Field | Use in Export |
+|-------|---------------|
+| `nombre` | Displayed as signer name |
+| `cargo` | Job title below signature |
+| `company` | Organization name |
+| `celular` / `telefono` | Contact phone number |
+| `email_alt` | Contact email |
+| `website` | Company URL |
+| `firma_img_url` | Embedded signature image |
+| `logo_url` | Header/footer logo (optional) |
+
+### OTP Verification Workflow
+
+For critical documents requiring OTP verification:
+
+1. **Initiate Export**: User requests document export
+2. **Generate OTP**: System sends OTP code to registered email/phone
+3. **Verify OTP**: User provides OTP code
+4. **Apply Signature**: System embeds signature in document
+5. **Generate Document**: Final document with digital signature is created
+
+<Note>
+  OTP verification is handled by separate authentication endpoints and is automatically integrated with signature application.
+</Note>
+
+---
+
+## Signature Image Guidelines
+
+### Recommended Specifications
+
+- **Format**: PNG (transparent background) or JPG
+- **Dimensions**: 300-500 pixels wide, 100-150 pixels high
+- **File Size**: Under 500 KB
+- **DPI**: 150-300 for print quality
+- **Background**: Transparent PNG recommended
+
+### Creating a Digital Signature
+
+1. Sign on white paper with black/blue pen
+2. Scan at high resolution (300 DPI)
+3. Use image editing software to:
+   - Crop to signature only
+   - Remove background (make transparent)
+   - Adjust contrast for clarity
+4. Save as PNG with transparency
+5. Upload using the assets endpoint
+
+---
+
+## Security Considerations
+
+### Access Control
+
+- Employees can only view and update their own signature profiles
+- Signature IDs are validated against the authenticated employee
+- Unauthorized access returns 404 error
+
+### Data Protection
+
+- Signature images are stored in employee-specific directories
+- URLs are sanitized to prevent path traversal
+- File uploads are validated for type and size
+
+### Audit Trail
+
+When signatures are applied to documents:
+- The authenticated user's ID is recorded
+- Timestamp of signature application is logged
+- Document export records include signer information
+
+---
+
+## Error Codes
+
+| Status Code | Description |
+|-------------|-------------|
+| 200 | Success - Signature retrieved or updated |
+| 201 | Created - Asset uploaded successfully |
+| 400 | Bad Request - Invalid field value or file format |
+| 404 | Not Found - Signature profile not found or no permission |
+| 500 | Internal Server Error - File storage or processing error |
+
+---
+
+## Complete Example: Setting Up a Signature
+
+```python Python
+import requests
+
+# 1. Get current signature profile
+url = "https://api.vigia.com/api/v1/firmas/me"
+headers = {"Authorization": f"Bearer {token}"}
+response = requests.get(url, headers=headers)
+signature = response.json()
+
+print(f"Current signature ID: {signature['id']}")
+
+# 2. Update signature details
+update_url = f"https://api.vigia.com/api/v1/firmas/{signature['id']}"
+update_data = {
+    "nombre": "Dr. Juan Pérez Ramírez",
+    "cargo": "Químico Farmacéutico - Responsable de Farmacovigilancia",
+    "company": "OTARVASQ S.A.C.",
+    "celular": "+51-987-654-321",
+    "email_alt": "juan.perez@otarvasq.com",
+    "website": "https://www.otarvasq.com"
+}
+
+response = requests.put(update_url, headers=headers, json=update_data)
+print("Signature updated:", response.json())
+
+# 3. Upload signature image
+asset_url = f"https://api.vigia.com/api/v1/firmas/{signature['id']}/assets"
+files = {"file": open("my_signature.png", "rb")}
+data = {"field": "firma_img"}
+
+response = requests.post(asset_url, headers=headers, files=files, data=data)
+print("Signature image uploaded:", response.json())
+
+# 4. Upload company logo
+files = {"file": open("company_logo.png", "rb")}
+data = {"field": "logo"}
+
+response = requests.post(asset_url, headers=headers, files=files, data=data)
+print("Logo uploaded:", response.json())
+
+# 5. Verify final signature profile
+response = requests.get(url, headers=headers)
+final_signature = response.json()
+print("\nFinal signature profile:")
+print(f"Name: {final_signature['nombre']}")
+print(f"Title: {final_signature['cargo']}")
+print(f"Signature image: {final_signature['firma_img_url']}")
+print(f"Logo: {final_signature['logo_url']}")
+```
+
+---
+
+## Related Endpoints
+
+<CardGroup cols={2}>
+  <Card title="ICSR Export" icon="file-export" href="/api/documents/export">
+    Export ICSR reports with embedded signatures
+  </Card>
+  <Card title="Document Management" icon="folder-open" href="/api/documents/upload">
+    Create and manage documents
+  </Card>
+</CardGroup>

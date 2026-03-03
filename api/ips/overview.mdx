@@ -1,0 +1,139 @@
+---
+title: 'IPS Reports Overview'
+description: 'API endpoints for managing Periodic Safety Update Reports (IPS) in VIGIA'
+---
+
+## Introduction
+
+The IPS (Informe Periódico de Seguridad) module manages periodic safety update reports for pharmaceutical products. These reports track adverse events, literature sources, and regulatory compliance for medications over specific time periods.
+
+## Base URL
+
+All IPS endpoints are prefixed with:
+
+```
+/api/v1/ips
+```
+
+## Authentication
+
+All endpoints require authentication via Bearer token:
+
+```http
+Authorization: Bearer <your_token>
+```
+
+## Permissions
+
+IPS endpoints use role-based access control:
+
+- `ips:read` - View IPS reports and calendar entries
+- `ips:edit` - Create and modify draft reports
+- `ips:qa` - Validate reports for QA approval
+- `ips:approve` - Approve validated reports
+- `ips:delete` - Delete draft reports
+- `ips:export` - Export reports to DOCX/PDF formats
+
+## Core Concepts
+
+### IPS Report Lifecycle
+
+Reports follow a three-state workflow:
+
+1. **Borrador** (Draft) - Initial creation and editing
+2. **Validado** (Validated) - QA approved, ready for final approval
+3. **Aprobado** (Approved) - Final state, locked from editing
+
+### Product Information
+
+Each IPS report is associated with an `IPSProducto` containing:
+
+- Product name and active ingredient
+- Pharmaceutical form and presentation
+- Sanitary registration number
+- Authorization dates
+
+### Literature Sources
+
+Reports track literature references from multiple databases:
+
+- **PMC** - PubMed Central
+- **LILACS** - Latin American and Caribbean Health Sciences
+- **SCIELO-WEB** - Scientific Electronic Library Online
+
+## Key Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/ips` | List all IPS reports |
+| POST | `/ips` | Create new IPS report |
+| GET | `/ips/{report_id}` | Get specific report |
+| PUT | `/ips/{report_id}` | Update report |
+| DELETE | `/ips/{report_id}` | Delete draft report |
+| POST | `/ips/{report_id}/fuentes/bulk` | Save literature sources |
+| GET | `/ips/{report_id}/fuentes` | List literature sources |
+| POST | `/ips/{report_id}/qa-validate` | QA validation |
+| POST | `/ips/{report_id}/approve` | Final approval |
+| GET | `/ips/{report_id}/export/docx` | Export to Word |
+| GET | `/ips/{report_id}/export/pdf` | Export to PDF |
+
+## Calendar Integration
+
+The IPS module integrates with a calendar system to schedule and track report submissions:
+
+- View calendar entries at `/ips/calendario`
+- Create reports from calendar entries using `/ips/from-calendario`
+- Prefill report data from calendar at `/ips/calendario/{cal_id}/prefill`
+
+## Common Response Fields
+
+### IPSReportOut
+
+```json
+{
+  "id": 123,
+  "producto_id": 456,
+  "producto": {
+    "id": 456,
+    "nombre": "PARACETAMOL 500MG TABLETAS",
+    "principio_activo": "PARACETAMOL",
+    "registro_sanitario": "2021-123456"
+  },
+  "periodo_inicio": "2024-01-01",
+  "periodo_fin": "2024-12-31",
+  "version": 1,
+  "estado": "borrador",
+  "unidades_comercializadas": 50000,
+  "casos": 12,
+  "created_at": "2024-03-15T10:30:00Z",
+  "updated_at": "2024-03-15T14:20:00Z"
+}
+```
+
+## Error Handling
+
+The API uses standard HTTP status codes:
+
+- `200` - Success
+- `201` - Created
+- `204` - No Content (successful deletion)
+- `400` - Bad Request (invalid parameters)
+- `401` - Unauthorized (invalid credentials)
+- `403` - Forbidden (insufficient permissions)
+- `404` - Not Found
+- `409` - Conflict (business rule violation)
+- `500` - Internal Server Error
+
+### Error Response Format
+
+```json
+{
+  "detail": "Error message describing what went wrong"
+}
+```
+
+## Next Steps
+
+- [Create IPS Reports](/api/ips/create-report)
+- [Manage Calendar](/api/ips/calendar)
+- [Handle Data Sources](/api/ips/data-sources)

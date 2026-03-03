@@ -1,0 +1,454 @@
+---
+title: ICD-11 Search API
+description: Search and retrieve ICD-11 diagnostic codes using WHO's official API with automatic token management and release fallback
+---
+
+The ICD-11 API provides integration with the World Health Organization's ICD-11 classification system for disease coding in pharmacovigilance cases.
+
+## Base Path
+
+```
+/api/v1/icd11
+```
+
+## Overview
+
+The VIGIA platform integrates with WHO's official ICD-11 API to provide:
+
+- **Diagnostic Code Search**: Full-text search across ICD-11 disease classifications
+- **Code Information**: Detailed information about specific ICD-11 codes
+- **Multi-Release Support**: Automatic fallback across ICD-11 releases
+- **OAuth2 Authentication**: Transparent token management with WHO ICD API
+- **Localization**: Configurable language support (default: Spanish)
+
+---
+
+## Authentication
+
+The API handles WHO ICD API authentication automatically using OAuth2 client credentials flow.
+
+### Required Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ICD_CLIENT_ID` | Yes | WHO ICD API Client ID |
+| `ICD_CLIENT_SECRET` | Yes | WHO ICD API Client Secret |
+| `ICD_TOKEN_URL` | No | Token endpoint (default: WHO production) |
+| `ICD_SCOPE` | No | OAuth scope (default: `icdapi_access`) |
+
+**Obtaining Credentials:**
+
+1. Register at [https://icd.who.int/icdapi](https://icd.who.int/icdapi)
+2. Create an application to receive Client ID and Secret
+3. Configure credentials in your environment
+
+**Token Management:**
+
+- Tokens are cached automatically
+- Auto-refresh when token expires (60s buffer)
+- No manual token handling required
+
+---
+
+## Endpoints
+
+### Search ICD-11 Codes
+
+<Card title="GET/POST /icd11/search" icon="magnifying-glass">
+  Search for ICD-11 disease codes by text query with pagination.
+</Card>
+
+**Query Parameters (GET):**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | - | Search query (required) |
+| `flatResults` | boolean | `true` | Return flat list vs hierarchical |
+| `highlighting` | boolean | `true` | Include search term highlighting |
+| `release` | string | auto | ICD-11 release version (e.g., "2025-01") |
+| `linearization` | string | `mms` | Linearization type (mms, icf, etc.) |
+| `chapterFilter` | string | null | Filter by ICD chapter |
+| `subtreesFilter` | string | null | Filter by code subtree |
+| `page` | integer | 1 | Page number (1-indexed) |
+| `pageSize` | integer | 25 | Results per page |
+
+**POST Request Body:**
+
+```json
+{
+  "q": "diabetes",
+  "flatResults": true,
+  "highlighting": true,
+  "page": 1,
+  "pageSize": 25
+}
+```
+
+**Example GET Request:**
+
+```bash
+GET /api/v1/icd11/search?q=hipertension&page=1&pageSize=10
+```
+
+**Example POST Request:**
+
+```bash
+POST /api/v1/icd11/search
+Content-Type: application/json
+
+{
+  "q": "enfermedad cardíaca",
+  "highlighting": true,
+  "pageSize": 15
+}
+```
+
+**Response:** `200 OK`
+
+```json
+{
+  "query": "hipertension",
+  "page": 1,
+  "pageSize": 10,
+  "flatResults": true,
+  "highlighting": true,
+  "results": [
+    {
+      "@id": "http://id.who.int/icd/entity/1234567890",
+      "title": "Hipertensión esencial (primaria)",
+      "code": "BA00",
+      "chapter": "09",
+      "score": 0.95,
+      "matchingPVs": [
+        {
+          "label": "Hipertensión esencial",
+          "propertyId": "title"
+        }
+      ]
+    },
+    {
+      "@id": "http://id.who.int/icd/entity/0987654321",
+      "title": "Enfermedad cardíaca hipertensiva",
+      "code": "BA01",
+      "chapter": "09",
+      "score": 0.87
+    }
+  ],
+  "total": 42
+}
+```
+
+**Response Fields:**
+
+- `results`: Array of matching ICD-11 entities
+- `total`: Total number of matches across all pages
+- `query`: Echo of search query
+- `page`, `pageSize`: Pagination info
+
+---
+
+### Get Code Information
+
+<Card title="GET /icd11/codeinfo/{code}" icon="info-circle">
+  Retrieve detailed information about a specific ICD-11 code.
+</Card>
+
+**Path Parameters:**
+
+- `code` (required): ICD-11 code (e.g., "BA00")
+
+**Query Parameters:**
+
+- `release` (optional): Specific release version
+- `linearization` (optional, default: "mms"): Linearization type
+
+**Example:**
+
+```bash
+GET /api/v1/icd11/codeinfo/BA00
+```
+
+**Response:** `200 OK`
+
+```json
+{
+  "@context": "http://id.who.int/icd/contexts/contextForLinearizationEntity.json",
+  "@id": "http://id.who.int/icd/release/11/mms/1234567890",
+  "code": "BA00",
+  "title": {
+    "@language": "es",
+    "@value": "Hipertensión esencial (primaria)"
+  },
+  "definition": {
+    "@language": "es",
+    "@value": "Presión arterial elevada sin causa identificable"
+  },
+  "longDefinition": {
+    "@language": "es",
+    "@value": "..."
+  },
+  "parent": [
+    "http://id.who.int/icd/release/11/mms/parent_id"
+  ],
+  "child": [],
+  "indexTerm": [
+    {
+      "label": {
+        "@language": "es",
+        "@value": "Hipertensión arterial"
+      }
+    }
+  ],
+  "inclusion": [],
+  "exclusion": []
+}
+```
+
+---
+
+## Release Management
+
+### Automatic Release Fallback
+
+The API implements intelligent release fallback to handle WHO API availability:
+
+**Fallback Order:**
+
+1. **Environment-specified release** (`ICD_RELEASE`)
+2. `2025-02`
+3. `2025-01`
+4. `2024-02`
+5. **Default release** (no version specified)
+
+**Behavior:**
+
+- If a release returns 404, automatically tries the next fallback
+- If client specifies a release explicitly, no fallback occurs (returns 404)
+- If all releases fail, returns 200 with empty results and `_tried` metadata
+
+**Example Response (All Releases Failed):**
+
+```json
+{
+  "query": "test",
+  "page": 1,
+  "pageSize": 25,
+  "flatResults": true,
+  "results": [],
+  "total": 0,
+  "_note": "WHO search returned 404 for all tested releases",
+  "_tried": [
+    {"url": "https://id.who.int/icd/release/11/2025-02/mms/search", "status": 404},
+    {"url": "https://id.who.int/icd/release/11/2025-01/mms/search", "status": 404},
+    {"url": "https://id.who.int/icd/release/11/mms/search", "status": 404}
+  ]
+}
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ICD_CLIENT_ID` | **Yes** | - | WHO API Client ID |
+| `ICD_CLIENT_SECRET` | **Yes** | - | WHO API Client Secret |
+| `ICD_API_VERSION` | No | `v2` | ICD API version |
+| `ICD_TOKEN_URL` | No | WHO prod URL | OAuth token endpoint |
+| `ICD_SCOPE` | No | `icdapi_access` | OAuth scope |
+| `ICD_BASE` | No | `https://id.who.int/icd` | ICD API base URL |
+| `ICD_ACCEPT_LANG` | No | `es` | Response language (es, en, etc.) |
+| `ICD_RELEASE` | No | auto | Preferred ICD-11 release version |
+| `ICD_HTTP_TIMEOUT` | No | `20` | HTTP request timeout (seconds) |
+
+### Linearizations
+
+ICD-11 supports multiple linearizations:
+
+- **mms** (default): Mortality and Morbidity Statistics
+- **icf**: International Classification of Functioning
+- **other**: Additional specialized linearizations
+
+---
+
+## Debug Endpoints
+
+### Ping
+
+<Card title="GET /icd11/debug/ping" icon="signal">
+  Check API configuration and connectivity.
+</Card>
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "client_id_prefix": "abc123def456",
+  "have_secret": true,
+  "lang": "es",
+  "base": "https://id.who.int/icd",
+  "prefer_release": "2025-02",
+  "api_version": "v2"
+}
+```
+
+---
+
+### Token Debug
+
+<Card title="GET /icd11/debug/token" icon="key">
+  Verify OAuth token retrieval and expiration.
+</Card>
+
+**Response:**
+
+```json
+{
+  "access_token_preview": "eyJhbGciOiJIUz...",
+  "exp": 1709481234.567
+}
+```
+
+---
+
+### Sample Search
+
+<Card title="GET /icd11/debug/sample" icon="vial">
+  Execute a sample search to verify end-to-end functionality.
+</Card>
+
+**Query Parameters:**
+
+- `q` (optional, default: "tos"): Test search query
+
+**Response:**
+
+```json
+{
+  "count": 3,
+  "first": [
+    {
+      "@id": "...",
+      "title": "Tos",
+      "code": "MD11"
+    }
+  ],
+  "_raw_keys": ["@context", "@graph", "destinationEntities", "total"]
+}
+```
+
+---
+
+## Error Handling
+
+### Common Errors
+
+**500 Internal Server Error** - Missing credentials:
+
+```json
+{
+  "detail": "ICD credentials missing"
+}
+```
+
+**422 Unprocessable Entity** - Missing required parameter:
+
+```json
+{
+  "detail": "q is required"
+}
+```
+
+**404 Not Found** - Code or release not found:
+
+```json
+{
+  "detail": "ICD release not found"
+}
+```
+
+**502 Bad Gateway** - WHO API connectivity issues:
+
+```json
+{
+  "detail": "ICD search network error: Connection timeout"
+}
+```
+
+### HTTP Timeout
+
+All WHO API requests have a configurable timeout (default: 20 seconds). Configure via `ICD_HTTP_TIMEOUT` environment variable.
+
+---
+
+## Usage Examples
+
+### Python
+
+```python
+import requests
+
+headers = {
+    "Authorization": "Bearer YOUR_JWT_TOKEN"
+}
+
+# Search for diabetes codes
+response = requests.get(
+    "https://api.vigia.com/api/v1/icd11/search",
+    params={
+        "q": "diabetes mellitus",
+        "pageSize": 10
+    },
+    headers=headers
+)
+
+results = response.json()
+for item in results["results"]:
+    print(f"{item['code']}: {item['title']}")
+```
+
+### JavaScript
+
+```javascript
+const response = await fetch(
+  'https://api.vigia.com/api/v1/icd11/search?q=asma&pageSize=5',
+  {
+    headers: {
+      'Authorization': 'Bearer YOUR_JWT_TOKEN'
+    }
+  }
+);
+
+const data = await response.json();
+console.log(`Found ${data.total} results`);
+data.results.forEach(item => {
+  console.log(`${item.code}: ${item.title}`);
+});
+```
+
+### cURL
+
+```bash
+curl -X POST "https://api.vigia.com/api/v1/icd11/search" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "q": "infarto agudo de miocardio",
+    "highlighting": true,
+    "pageSize": 15
+  }'
+```
+
+---
+
+## Best Practices
+
+1. **Use POST for Complex Queries**: POST requests support larger payloads and better handle special characters
+2. **Enable Highlighting**: Set `highlighting: true` to see which terms matched
+3. **Paginate Results**: Use appropriate `pageSize` values to avoid overwhelming responses
+4. **Cache Code Info**: ICD-11 code details rarely change within a release - consider caching
+5. **Monitor Token Expiry**: The API handles this automatically, but be aware of credential expiration
+6. **Use Specific Releases**: For production, specify a fixed release version for consistency

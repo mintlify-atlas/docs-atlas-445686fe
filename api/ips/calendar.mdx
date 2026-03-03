@@ -1,0 +1,580 @@
+---
+title: 'IPS Calendar Management'
+description: 'Manage scheduled IPS reports through the calendar system'
+---
+
+## Overview
+
+The IPS Calendar module tracks regulatory deadlines and scheduled reports for pharmaceutical products. It integrates with the main IPS reporting system to streamline report creation and compliance tracking.
+
+## List Calendar Entries
+
+<CodeGroup>
+```http GET /api/v1/ips/calendario
+GET /api/v1/ips/calendario?limit=10&offset=0&q=PARACETAMOL
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/calendario",
+    headers={"Authorization": f"Bearer {token}"},
+    params={
+        "limit": 10,
+        "offset": 0,
+        "q": "PARACETAMOL"
+    }
+)
+data = response.json()
+items = data["items"]
+total = data["total"]
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="10">
+  Number of entries to return (1-200)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of entries to skip for pagination
+</ParamField>
+
+<ParamField query="q" type="string">
+  Search query to filter by product name, active ingredient, or registration number
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array<CalendarioIPSOut>">
+  List of calendar entries
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of matching entries
+</ResponseField>
+
+```json Response Example
+{
+  "items": [
+    {
+      "id": 789,
+      "numero": 1,
+      "producto_forma": "PARACETAMOL 500MG - TABLETAS",
+      "ifa": "PARACETAMOL",
+      "registro_numero": "2021-123456",
+      "registro_estado": "Vigente",
+      "registro_vencimiento": "2026-03-15",
+      "registro_primera_autorizacion": "2021-03-15",
+      "ips_version": "1.0",
+      "ips_fid": "2024-01-01",
+      "ips_fcd": "2024-12-31",
+      "ips_anios": 1.0,
+      "rs_version": "1.0",
+      "rs_fid": "2024-01-01",
+      "rs_fcd": "2024-06-30",
+      "rs_anios": 0.5,
+      "fecha_lim_elaboracion": "2025-01-31",
+      "fecha_lim_revision_aprobacion": "2025-02-15",
+      "fecha_sometimiento": null,
+      "estado_ips": "Borrador",
+      "responsable_aprobacion": "Dr. Juan Pérez",
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-03-15T10:30:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+## Get Calendar Entry
+
+<CodeGroup>
+```http GET /api/v1/ips/calendario/{item_id}
+GET /api/v1/ips/calendario/789
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/calendario/789",
+    headers={"Authorization": f"Bearer {token}"}
+)
+entry = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="item_id" type="integer" required>
+  ID of the calendar entry
+</ParamField>
+
+### Response
+
+Returns a single `CalendarioIPSOut` object with all calendar entry details.
+
+---
+
+## Create Calendar Entry
+
+<CodeGroup>
+```http POST /api/v1/ips/calendario
+POST /api/v1/ips/calendario
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "producto_forma": "PARACETAMOL 500MG - TABLETAS",
+  "ifa": "PARACETAMOL",
+  "registro_numero": "2021-123456",
+  "registro_estado": "Vigente",
+  "registro_vencimiento": "2026-03-15",
+  "registro_primera_autorizacion": "2021-03-15",
+  "ips_fid": "2024-01-01",
+  "ips_fcd": "2024-12-31",
+  "fecha_lim_elaboracion": "2025-01-31",
+  "estado_ips": "Borrador"
+}
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips/calendario",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "producto_forma": "PARACETAMOL 500MG - TABLETAS",
+        "ifa": "PARACETAMOL",
+        "registro_numero": "2021-123456",
+        "registro_estado": "Vigente",
+        "ips_fid": "2024-01-01",
+        "ips_fcd": "2024-12-31",
+        "estado_ips": "Borrador"
+    }
+)
+entry = response.json()
+```
+</CodeGroup>
+
+### Request Body (CalendarioIPSCreate)
+
+<ParamField body="producto_forma" type="string" required>
+  Product name with pharmaceutical form
+</ParamField>
+
+<ParamField body="ifa" type="string" required>
+  Active ingredient (IFA)
+</ParamField>
+
+<ParamField body="registro_numero" type="string" required>
+  Sanitary registration number
+</ParamField>
+
+<ParamField body="registro_estado" type="string" default="Vigente">
+  Registration status
+</ParamField>
+
+<ParamField body="registro_vencimiento" type="date">
+  Registration expiration date (YYYY-MM-DD)
+</ParamField>
+
+<ParamField body="registro_primera_autorizacion" type="date">
+  First authorization date (YYYY-MM-DD)
+</ParamField>
+
+<ParamField body="ips_version" type="string" default="1.0">
+  IPS version number
+</ParamField>
+
+<ParamField body="ips_fid" type="date">
+  IPS period start date (FID - Fecha Inicio Datos)
+</ParamField>
+
+<ParamField body="ips_fcd" type="date">
+  IPS period end date (FCD - Fecha Cierre Datos)
+</ParamField>
+
+<ParamField body="ips_anios" type="number">
+  IPS period duration in years
+</ParamField>
+
+<ParamField body="rs_version" type="string" default="1.0">
+  Safety summary (Resumen de Seguridad) version
+</ParamField>
+
+<ParamField body="rs_fid" type="date">
+  Safety summary period start date
+</ParamField>
+
+<ParamField body="rs_fcd" type="date">
+  Safety summary period end date
+</ParamField>
+
+<ParamField body="rs_anios" type="number">
+  Safety summary period duration in years
+</ParamField>
+
+<ParamField body="fecha_lim_elaboracion" type="date">
+  Report elaboration deadline
+</ParamField>
+
+<ParamField body="fecha_lim_revision_aprobacion" type="date">
+  Review and approval deadline
+</ParamField>
+
+<ParamField body="fecha_sometimiento" type="date">
+  Submission date to regulatory authority
+</ParamField>
+
+<ParamField body="estado_ips" type="string" default="Borrador">
+  IPS status: `Borrador`, `Validado`, `Firmado`, `Sometido`, `Aprobado`, or `Observado`
+</ParamField>
+
+<ParamField body="responsable_aprobacion" type="string">
+  Person responsible for approval
+</ParamField>
+
+### Response
+
+Returns the created calendar entry with HTTP 201 Created.
+
+---
+
+## Update Calendar Entry
+
+<CodeGroup>
+```http PUT /api/v1/ips/calendario/{item_id}
+PUT /api/v1/ips/calendario/789
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "estado_ips": "Validado",
+  "fecha_sometimiento": "2025-02-01"
+}
+```
+
+```python Python
+response = requests.put(
+    "https://api.vigia.com/api/v1/ips/calendario/789",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "estado_ips": "Validado",
+        "fecha_sometimiento": "2025-02-01"
+    }
+)
+entry = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="item_id" type="integer" required>
+  ID of the calendar entry to update
+</ParamField>
+
+### Request Body
+
+Same fields as `CalendarioIPSCreate`. All fields are optional.
+
+### Audit Trail
+
+Updates are automatically tracked with before/after change detection:
+
+```json
+{
+  "changes": {
+    "estado_ips": ["Borrador", "Validado"],
+    "fecha_sometimiento": [null, "2025-02-01"]
+  }
+}
+```
+
+---
+
+## Delete Calendar Entry
+
+<CodeGroup>
+```http DELETE /api/v1/ips/calendario/{item_id}
+DELETE /api/v1/ips/calendario/789
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.delete(
+    "https://api.vigia.com/api/v1/ips/calendario/789",
+    headers={"Authorization": f"Bearer {token}"}
+)
+# Returns HTTP 204 No Content on success
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="item_id" type="integer" required>
+  ID of the calendar entry to delete
+</ParamField>
+
+### Response
+
+Returns HTTP 204 No Content on successful deletion.
+
+---
+
+## Search Calendar Products
+
+<CodeGroup>
+```http GET /api/v1/ips/calendario-search
+GET /api/v1/ips/calendario-search?q=PARACETA&limit=20
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/calendario-search",
+    headers={"Authorization": f"Bearer {token}"},
+    params={"q": "PARACETA", "limit": 20}
+)
+results = response.json()
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="q" type="string">
+  Search query for product name, active ingredient, or registration number
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Maximum results to return (1-200)
+</ParamField>
+
+### Response
+
+Returns a list of matching products in `{id, label}` format for dropdown/autocomplete use:
+
+```json
+[
+  {
+    "id": 789,
+    "label": "PARACETAMOL 500MG - TABLETAS [Reg: 2021-123456]"
+  },
+  {
+    "id": 790,
+    "label": "PARACETAMOL 1G SUSPENSION [Reg: 2022-654321]"
+  }
+]
+```
+
+---
+
+## Get Product Form Options
+
+Retrieve unique product forms from the calendar for autocomplete.
+
+<CodeGroup>
+```http GET /api/v1/ips/calendario/opciones
+GET /api/v1/ips/calendario/opciones?q=PARA&limit=20
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/calendario/opciones",
+    headers={"Authorization": f"Bearer {token}"},
+    params={"q": "PARA", "limit": 20}
+)
+options = response.json()
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="q" type="string">
+  Search filter for product form
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Maximum options to return (1-200)
+</ParamField>
+
+### Response
+
+Returns an array of strings, ordered by frequency:
+
+```json
+[
+  "PARACETAMOL 500MG - TABLETAS",
+  "PARACETAMOL 1G - SUSPENSION ORAL",
+  "PARACETAMOL 100MG/ML - GOTAS"
+]
+```
+
+---
+
+## Prefill Report from Calendar
+
+Get prefilled data for creating an IPS report from a calendar entry.
+
+<CodeGroup>
+```http GET /api/v1/ips/calendario/{cal_id}/prefill
+GET /api/v1/ips/calendario/789/prefill
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/calendario/789/prefill",
+    headers={"Authorization": f"Bearer {token}"}
+)
+prefill_data = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="cal_id" type="integer" required>
+  Calendar entry ID to prefill from
+</ParamField>
+
+### Response
+
+```json
+{
+  "producto": {
+    "nombre": "PARACETAMOL 500MG - TABLETAS",
+    "principio_activo": "PARACETAMOL",
+    "forma_farmaceutica": "TABLETAS",
+    "presentacion": "CAJA X 20 TABLETAS",
+    "via": "ORAL",
+    "registro_sanitario": "2021-123456",
+    "fecha_autorizacion": "2021-03-15",
+    "fabricante": ""
+  },
+  "report": {
+    "version": 1,
+    "periodo_inicio": "2024-01-01",
+    "periodo_fin": "2024-12-31",
+    "estado": "borrador"
+  },
+  "cal_id": 789
+}
+```
+
+---
+
+## Create Report from Calendar
+
+Create an IPS report directly from a calendar entry.
+
+<CodeGroup>
+```http POST /api/v1/ips/from-calendario
+POST /api/v1/ips/from-calendario?cal_id=789
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "fuentes": [
+    {
+      "title": "Safety study",
+      "collection": "PMC",
+      "year": 2024
+    }
+  ],
+  "kpis": {
+    "literaturas_detected": 50
+  },
+  "unidades_comercializadas": 50000
+}
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips/from-calendario",
+    headers={"Authorization": f"Bearer {token}"},
+    params={"cal_id": 789},
+    json={
+        "fuentes": [{"title": "Safety study", "collection": "PMC"}],
+        "unidades_comercializadas": 50000
+    }
+)
+report = response.json()
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="cal_id" type="integer" required>
+  Calendar entry ID to create report from
+</ParamField>
+
+<ParamField query="periodo_inicio" type="date">
+  Override period start date (defaults to calendar entry dates)
+</ParamField>
+
+<ParamField query="periodo_fin" type="date">
+  Override period end date (defaults to calendar entry dates)
+</ParamField>
+
+### Request Body (Optional)
+
+<ParamField body="fuentes" type="array">
+  Initial literature sources to attach
+</ParamField>
+
+<ParamField body="kpis" type="object">
+  Initial KPI values
+</ParamField>
+
+<ParamField body="unidades_comercializadas" type="integer">
+  Units commercialized during period
+</ParamField>
+
+### Response
+
+Returns the created `IPSReportOut` with associated product automatically created or matched.
+
+---
+
+## View Report History by Calendar
+
+Get all IPS reports associated with a calendar entry.
+
+<CodeGroup>
+```http GET /api/v1/ips/calendario/{cal_id}/reports
+GET /api/v1/ips/calendario/789/reports?limit=50&offset=0
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/calendario/789/reports",
+    headers={"Authorization": f"Bearer {token}"},
+    params={"limit": 50}
+)
+reports = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="cal_id" type="integer" required>
+  Calendar entry ID
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Number of reports to return (1-200)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of reports to skip
+</ParamField>
+
+### Response
+
+Returns an array of `IPSReportOut` objects, ordered by most recent first.

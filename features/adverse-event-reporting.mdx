@@ -1,0 +1,402 @@
+---
+title: "Adverse Event Reporting"
+description: "MedDRA coding, causality assessment with Karch-Lasagna and French algorithms, and comprehensive event documentation"
+---
+
+## Overview
+
+VIGIA's Adverse Event module provides comprehensive tools for coding, classifying, and assessing the causal relationship between drugs and adverse events using internationally recognized algorithms and standardized medical terminology.
+
+<CardGroup cols={2}>
+  <Card title="MedDRA Integration" icon="book-medical">
+    AI-powered MedDRA coding with LLT→PT mapping and SOC hierarchy
+  </Card>
+  <Card title="Causality Algorithms" icon="calculator">
+    Karch-Lasagna and French (FT-42) assessment algorithms
+  </Card>
+  <Card title="Multi-Event Cases" icon="layer-group">
+    Track multiple concurrent adverse events per ICSR
+  </Card>
+  <Card title="Automated Extraction" icon="wand-magic-sparkles">
+    AI extraction of events from case narratives
+  </Card>
+</CardGroup>
+
+## MedDRA Coding
+
+### What is MedDRA?
+
+MedDRA (Medical Dictionary for Regulatory Activities) is the international medical terminology used in pharmacovigilance. VIGIA supports the complete MedDRA hierarchy:
+
+```
+SOC (System Organ Class)
+  ↓
+HLGT (High Level Group Term)
+  ↓
+HLT (High Level Term)
+  ↓
+PT (Preferred Term) ← Primary coding level
+  ↓
+LLT (Lowest Level Term) ← User verbatim terms
+```
+
+### AI-Powered MedDRA Suggestion
+
+VIGIA uses OpenAI and local NLP to suggest MedDRA codes:
+
+```bash
+GET /api/v1/meddra/suggest?q=náuseas&limit=10&scope=pt
+```
+
+**Query Parameters:**
+- `q`: Search term (Spanish or English)
+- `limit`: Maximum results (default: 15)
+- `scope`: Search scope - `llt`, `pt`, `hlt`, `hlgt`, `soc`, or `all`
+- `version_id`: MedDRA version (optional)
+
+**Response:**
+```json
+{
+  "suggestions": [
+    {
+      "code": "10028813",
+      "term": "Nausea",
+      "level": "PT",
+      "soc": "Gastrointestinal disorders",
+      "score": 0.95,
+      "match_type": "exact"
+    },
+    {
+      "code": "10047699",
+      "term": "Vomiting",
+      "level": "PT",
+      "soc": "Gastrointestinal disorders",
+      "score": 0.78,
+      "match_type": "related"
+    }
+  ]
+}
+```
+
+<Note>
+**Smart Matching**: The system uses multiple strategies:
+1. Exact match (normalized, accent-insensitive)
+2. Whole word match (prevents "epicardio" matching "picar")
+3. Prefix match on tokens
+4. Semantic similarity via OpenAI embeddings
+</Note>
+
+### Event Extraction from Narrative
+
+Automatically extract adverse events from case narratives:
+
+```bash
+POST /api/v1/meddra/extract
+Content-Type: application/json
+
+{
+  "text": "Paciente presenta náuseas, vómitos y dolor abdominal intenso desde hace 3 días.",
+  "auto_code": true,
+  "include_literal": true
+}
+```
+
+**Response:**
+```json
+{
+  "events": [
+    {
+      "verbatim": "náuseas",
+      "llt_code": "10028813",
+      "llt_term": "Náusea",
+      "pt_code": "10028813",
+      "pt_term": "Nausea",
+      "confidence": 0.92,
+      "found_literal": true
+    },
+    {
+      "verbatim": "vómitos",
+      "llt_code": "10047700",
+      "llt_term": "Vómito",
+      "pt_code": "10047699",
+      "pt_term": "Vomiting",
+      "confidence": 0.89,
+      "found_literal": true
+    },
+    {
+      "verbatim": "dolor abdominal",
+      "llt_code": "10000081",
+      "llt_term": "Dolor abdominal",
+      "pt_code": "10000081",
+      "pt_term": "Abdominal pain",
+      "confidence": 0.95,
+      "found_literal": true
+    }
+  ]
+}
+```
+
+### Coding Workflow in ICSR
+
+<Steps>
+  <Step title="Create or edit ICSR">
+    Navigate to the ICSR detail page
+  </Step>
+  
+  <Step title="Add adverse events">
+    Events can be added manually or extracted automatically from the narrative
+    ```bash
+    PUT /api/v1/icsr/{icsr_id}/eventos
+    {
+      "eventos": [
+        {
+          "texto": "Náuseas severas",
+          "fecha_inicio": "2024-01-15",
+          "gravedad": "Moderada",
+          "tipo_notificacion": "Espontáneo"
+        }
+      ]
+    }
+    ```
+  </Step>
+  
+  <Step title="Apply MedDRA codes">
+    Use the search interface or automated coding:
+    ```bash
+    PUT /api/v1/icsr/{icsr_id}/meddra
+    {
+      "eventos": [
+        {
+          "texto": "Náuseas severas",
+          "meddra_llt_code": "10028813",
+          "meddra_llt_term": "Náusea",
+          "meddra_pt_code": "10028813",
+          "meddra_pt_term": "Nausea"
+        }
+      ]
+    }
+    ```
+  </Step>
+  
+  <Step title="Review and validate">
+    Pharmacovigilance specialists review auto-coded events and make adjustments
+  </Step>
+</Steps>
+
+## Causality Assessment
+
+### Karch-Lasagna Algorithm
+
+The Karch-Lasagna algorithm evaluates causality using 8 criteria:
+
+| Criterion | Score Range | Description |
+|-----------|-------------|-------------|
+| **Temporalidad** | 0-2 | Temporal relationship between drug and event |
+| **Conocimiento previo** | 0-1 | Known ADR in literature/labeling |
+| **Dechallenge** | 0-1 | Event resolution upon drug discontinuation |
+| **Rechallenge** | 0-2 | Event recurrence upon re-exposure |
+| **Alternativas** | 0-2 | Other possible causes excluded |
+| **Factores contribuyentes** | -1-0 | Contributing factors present |
+| **Exploraciones** | 0-1 | Objective evidence (labs, imaging) |
+
+#### Run Karch-Lasagna Assessment
+
+```bash
+GET /api/v1/causality/karch-lasagna/suggest/{icsr_id}
+```
+
+**AI-Powered Evaluation:**
+The system uses LLM (Gemini 1.5 Pro) to automatically evaluate each criterion based on case data:
+
+```json
+{
+  "ok": true,
+  "suggestion": {
+    "criterios": {
+      "temporalidad": {
+        "resp": "si",
+        "score_sys": 2,
+        "score_qf": 2,
+        "rationale_sys": "El evento inició 2 días después del medicamento",
+        "rationale_qf": "Relación temporal clara"
+      },
+      "conocimiento_previo": {
+        "resp": "si",
+        "score_sys": 1,
+        "rationale_sys": "Náuseas es RAM conocida según ficha técnica"
+      },
+      "dechallenge": {
+        "resp": "si",
+        "score_sys": 1,
+        "rationale_sys": "Síntomas cesaron al suspender el fármaco"
+      }
+    },
+    "score_total_sys": 7,
+    "score_total_qf": 7,
+    "clasificacion_sys": "Probable",
+    "clasificacion_qf": "Probable"
+  }
+}
+```
+
+**Classification Scale:**
+- **Definitiva** (8-10 points): Rechallenge positive, no alternatives
+- **Probable** (5-7 points): Good temporal relationship, known ADR
+- **Posible** (3-4 points): Temporal relationship present, alternatives exist
+- **Improbable** (1-2 points): Poor temporal relationship, likely alternatives
+- **Inclasificable** (0 points): Insufficient information
+
+<Note>
+**Dual Scoring System**: 
+- `score_sys`: AI-generated score
+- `score_qf`: Pharmacist-validated score
+
+This allows AI suggestions while maintaining human oversight.
+</Note>
+
+#### Confirm Assessment
+
+After review, save the causality assessment:
+
+```bash
+PUT /api/v1/causality/karch-lasagna/confirm/{icsr_id}
+Content-Type: application/json
+
+{
+  "criterios": {
+    "temporalidad": {
+      "resp": "si",
+      "score_qf": 2,
+      "rationale_qf": "Confirmed by QF: Clear temporal relationship"
+    },
+    "conocimiento_previo": {"resp": "si", "score_qf": 1},
+    "dechallenge": {"resp": "si", "score_qf": 1},
+    "rechallenge": {"resp": "no", "score_qf": 0},
+    "alternativas": {"resp": "no_sabe", "score_qf": 0},
+    "factores_contribuyentes": {"resp": "no", "score_qf": 0},
+    "exploraciones": {"resp": "no", "score_qf": 0}
+  },
+  "score_total_qf": 4,
+  "clasificacion_qf": "Posible",
+  "rationale_global_qf": "Buena relación temporal pero sin dechallenge documentado"
+}
+```
+
+### French Algorithm (FT-42)
+
+Alternative causality method focusing on pharmaceutical data sheet analysis:
+
+```bash
+POST /api/v1/causality/ft/analyze
+Content-Type: multipart/form-data
+
+file: [PDF of pharmaceutical data sheet]
+mode: "ft42"
+```
+
+**Features:**
+- OCR extraction from pharmaceutical data sheets (Ficha Técnica)
+- Smart header/footer removal
+- Multi-page PDF support
+- Automatic re-challenge/de-challenge detection
+- Expected vs. Unexpected ADR classification
+
+## Event Severity Classification
+
+VIGIA follows ICH E2A guidelines for severity:
+
+| Severity | Criteria |
+|----------|----------|
+| **Leve** | Minor discomfort, no intervention required |
+| **Moderada** | Interferes with daily activities, may require intervention |
+| **Grave** | Life-threatening, requires hospitalization, causes disability/death |
+
+**Serious Event Criteria (Grave):**
+- Death
+- Life-threatening
+- Hospitalization (initial or prolonged)
+- Persistent/significant disability
+- Congenital anomaly
+- Important medical event
+
+## API Endpoints Summary
+
+### MedDRA
+
+```bash
+# Search MedDRA terms
+GET /api/v1/meddra/suggest?q={term}&scope=pt&limit=15
+
+# Extract events from narrative
+POST /api/v1/meddra/extract
+
+# Get hierarchy (PT → SOC)
+GET /api/v1/meddra/hierarchy/{code}
+```
+
+### ICSR Events
+
+```bash
+# List events for ICSR
+GET /api/v1/icsr/{icsr_id}/eventos
+
+# Replace all events
+PUT /api/v1/icsr/{icsr_id}/eventos
+
+# Update MedDRA coding
+PUT /api/v1/icsr/{icsr_id}/meddra
+
+# Bulk operations
+GET /api/v1/icsr/_bulk/eventos?ids=1&ids=2&ids=3
+```
+
+### Causality
+
+```bash
+# Get last assessment
+GET /api/v1/causality/karch-lasagna/last/{icsr_id}
+
+# AI suggestion
+GET /api/v1/causality/karch-lasagna/suggest/{icsr_id}
+
+# Confirm assessment
+PUT /api/v1/causality/karch-lasagna/confirm/{icsr_id}
+
+# French algorithm
+POST /api/v1/causality/ft/analyze
+```
+
+## Code References
+
+| Feature | Implementation |
+|---------|---------------|
+| Event Model | `backend/app/models/icsr_evento.py:16-76` |
+| MedDRA Search | `backend/app/routers/meddra_unified.py:186-200` |
+| Event Extraction | `backend/app/routers/meddra_unified.py` |
+| Karch-Lasagna | `backend/app/routers/causality_karch_lasagna.py:119-199` |
+| French Algorithm | `backend/app/routers/causality_ft.py:1-200` |
+| ICSR Events CRUD | `backend/app/routers/icsr.py:1077-1209` |
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Coding Quality" icon="star">
+    - Use PT (Preferred Term) level for primary coding
+    - Include LLT when verbatim differs from PT
+    - Verify AI suggestions before confirming
+    - Document manual coding rationale
+  </Card>
+  
+  <Card title="Causality Assessment" icon="scale-balanced">
+    - Review all available medical records
+    - Document re-challenge/de-challenge data
+    - Consider temporal plausibility
+    - Involve clinical pharmacist in complex cases
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [ICSR Management](/features/icsr-management) - Full case management
+- [Surveillance](/features/surveillance) - Signal detection across events
+- [IPS Reports](/features/ips-reports) - Periodic safety reporting

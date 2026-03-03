@@ -1,0 +1,374 @@
+---
+title: 'List ICSR Cases'
+api: 'GET /api/v1/icsr'
+description: 'Retrieve a paginated list of ICSR cases with filtering and search capabilities'
+---
+
+## Endpoint
+
+```
+GET /api/v1/icsr
+```
+
+## Authentication
+
+Requires permission: `icsr:list`
+
+## Query Parameters
+
+<ParamField query="page" type="integer" default="1">
+  Page number for pagination (minimum: 1)
+</ParamField>
+
+<ParamField query="page_size" type="integer" default="20">
+  Number of items per page (minimum: 1, maximum: 200)
+</ParamField>
+
+<ParamField query="q" type="string">
+  Full-text search query. Searches across:
+  - Patient initials
+  - Case number
+  - Product names
+  - Event descriptions
+  - Reporter name
+  - Internal codes
+</ParamField>
+
+<ParamField query="fecha_desde" type="string" format="date">
+  Filter cases with event start date on or after this date (ISO format: YYYY-MM-DD). Alias: `date_from`
+</ParamField>
+
+<ParamField query="fecha_hasta" type="string" format="date">
+  Filter cases with event start date on or before this date (ISO format: YYYY-MM-DD). Alias: `date_to`
+</ParamField>
+
+<ParamField query="order_by" type="string" default="id">
+  Field to sort by. Common values:
+  - `id` - Case ID
+  - `created_at` - Creation timestamp
+  - `fecha_inicio_evento` - Event start date
+  - `gravedad` - Severity
+  - `estado` - Status
+</ParamField>
+
+<ParamField query="order_dir" type="string" default="desc">
+  Sort direction:
+  - `asc` - Ascending order
+  - `desc` - Descending order (default, showing newest first)
+</ParamField>
+
+## Response
+
+<ResponseField name="items" type="array">
+  Array of ICSR case objects
+  
+  <Expandable title="ICSR Object Schema">
+    <ResponseField name="id" type="integer">
+      Unique case identifier
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string" format="datetime">
+      Case creation timestamp
+    </ResponseField>
+    
+    <ResponseField name="paciente_iniciales" type="string">
+      Patient initials
+    </ResponseField>
+    
+    <ResponseField name="paciente_edad" type="integer">
+      Patient age
+    </ResponseField>
+    
+    <ResponseField name="paciente_sexo" type="string">
+      Patient sex (M/F/O)
+    </ResponseField>
+    
+    <ResponseField name="paciente_peso" type="number">
+      Patient weight in kg
+    </ResponseField>
+    
+    <ResponseField name="reportante_nombre" type="string">
+      Reporter name
+    </ResponseField>
+    
+    <ResponseField name="reportante_email" type="string">
+      Reporter email
+    </ResponseField>
+    
+    <ResponseField name="reportante_telefono" type="string">
+      Reporter phone
+    </ResponseField>
+    
+    <ResponseField name="producto_sospechoso" type="string">
+      Suspected product name
+    </ResponseField>
+    
+    <ResponseField name="fecha_inicio_evento" type="string" format="date">
+      Event start date
+    </ResponseField>
+    
+    <ResponseField name="fecha_fin_evento" type="string" format="date">
+      Event end date
+    </ResponseField>
+    
+    <ResponseField name="descripcion_evento" type="string">
+      Event narrative description
+    </ResponseField>
+    
+    <ResponseField name="gravedad" type="string">
+      Severity classification
+    </ResponseField>
+    
+    <ResponseField name="estado" type="string">
+      Case status (e.g., "Pendiente", "En progreso", "Cerrado")
+    </ResponseField>
+    
+    <ResponseField name="numero" type="string">
+      Case number/reference
+    </ResponseField>
+    
+    <ResponseField name="ea_causalidad" type="string">
+      Causality assessment
+    </ResponseField>
+    
+    <ResponseField name="ea_desenlace" type="string">
+      Event outcome
+    </ResponseField>
+    
+    <ResponseField name="productos" type="array">
+      Array of suspected product objects with full details
+    </ResponseField>
+    
+    <ResponseField name="concomitantes" type="array">
+      Array of concomitant medication objects
+    </ResponseField>
+    
+    <ResponseField name="seguimientos" type="array">
+      Array of followup entry objects
+    </ResponseField>
+    
+    <ResponseField name="eventos" type="array">
+      Array of adverse event objects with MedDRA coding
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of cases matching the filters (not just the current page)
+</ResponseField>
+
+<ResponseField name="page" type="integer">
+  Current page number
+</ResponseField>
+
+<ResponseField name="page_size" type="integer">
+  Number of items per page
+</ResponseField>
+
+## Example Requests
+
+### Basic Listing (First Page)
+
+```bash
+GET /api/v1/icsr?page=1&page_size=20
+```
+
+### Search by Patient Initials
+
+```bash
+GET /api/v1/icsr?q=JD&page=1&page_size=20
+```
+
+### Filter by Date Range
+
+```bash
+GET /api/v1/icsr?fecha_desde=2024-01-01&fecha_hasta=2024-01-31
+```
+
+### Search with Custom Sort
+
+```bash
+GET /api/v1/icsr?q=amoxicilina&order_by=gravedad&order_dir=asc
+```
+
+### Large Page Size
+
+```bash
+GET /api/v1/icsr?page=1&page_size=100
+```
+
+## Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": 1234,
+      "created_at": "2024-01-20T10:30:00Z",
+      "paciente_iniciales": "JD",
+      "paciente_edad": 45,
+      "paciente_sexo": "M",
+      "paciente_peso": 72.5,
+      "reportante_nombre": "Dr. Maria Garcia",
+      "reportante_email": "mgarcia@hospital.com",
+      "producto_sospechoso": "Amoxicilina 500mg",
+      "fecha_inicio_evento": "2024-01-15",
+      "fecha_fin_evento": "2024-01-18",
+      "descripcion_evento": "Paciente desarrolló rash eritematoso generalizado...",
+      "gravedad": "No grave",
+      "estado": "Cerrado",
+      "numero": "ICSR-2024-001",
+      "ea_causalidad": "Probable",
+      "ea_desenlace": "Recuperado",
+      "productos": [
+        {
+          "id": 5678,
+          "nombre_producto": "Amoxicilina",
+          "ifa": "Amoxicilina trihidratada",
+          "registro_sanitario": "EE-123456",
+          "nro_lote": "LOT2024-001",
+          "via_administracion": "Oral",
+          "dosis_frecuencia": "500mg cada 8 horas"
+        }
+      ],
+      "concomitantes": [],
+      "seguimientos": [],
+      "eventos": [
+        {
+          "id": 9012,
+          "icsr_id": 1234,
+          "texto": "Rash eritematoso generalizado",
+          "gravedad": "No grave",
+          "causalidad": "Probable",
+          "desenlace": "Recuperado",
+          "meddra_pt_code": "10037844",
+          "meddra_pt_term": "Rash"
+        }
+      ]
+    },
+    {
+      "id": 1233,
+      "created_at": "2024-01-19T14:22:00Z",
+      "paciente_iniciales": "AB",
+      "paciente_edad": 32,
+      "paciente_sexo": "F",
+      "reportante_nombre": "Dr. Carlos Lopez",
+      "producto_sospechoso": "Ibuprofeno 400mg",
+      "fecha_inicio_evento": "2024-01-18",
+      "descripcion_evento": "Paciente presentó dolor epigástrico severo...",
+      "gravedad": "Grave",
+      "estado": "En progreso",
+      "ea_causalidad": "Posible",
+      "productos": [
+        {
+          "id": 5677,
+          "nombre_producto": "Ibuprofeno",
+          "ifa": "Ibuprofeno",
+          "forma_farmaceutica": "Tableta"
+        }
+      ],
+      "concomitantes": [],
+      "seguimientos": [],
+      "eventos": []
+    }
+  ],
+  "total": 156,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+## Pagination Calculation
+
+To calculate total pages:
+
+```javascript
+const totalPages = Math.ceil(response.total / response.page_size);
+```
+
+To check if there's a next page:
+
+```javascript
+const hasNextPage = response.page * response.page_size < response.total;
+```
+
+## Search Behavior
+
+The `q` parameter performs case-insensitive partial matching across multiple fields:
+
+- **Patient**: initials, DNI
+- **Case**: number, internal code, CENAFYT code
+- **Product**: suspected product name, product array names
+- **Event**: description/narrative
+- **Reporter**: name, email
+
+Search is optimized for performance with database indexing on key fields.
+
+## Date Filtering
+
+Date filters apply to the `fecha_inicio_evento` field:
+
+- `fecha_desde` is inclusive (`>=`)
+- `fecha_hasta` is inclusive (`<=`)
+- Both can be used together for a range
+- Dates must be in ISO format (YYYY-MM-DD)
+
+## Sorting
+
+Available sort fields:
+
+- `id` - Numeric case ID (default)
+- `created_at` - Creation timestamp
+- `fecha_inicio_evento` - Event start date
+- `gravedad` - Severity (alphabetical)
+- `estado` - Status (alphabetical)
+- `paciente_iniciales` - Patient initials (alphabetical)
+
+Default sort is `id DESC` (newest cases first).
+
+## Performance Notes
+
+- List queries are optimized with database indexes
+- Large page sizes (>100) may impact performance
+- The response includes complete nested objects (products, events, etc.)
+- For minimal data transfer, consider implementing a "list" endpoint that returns only summary fields
+
+## Error Responses
+
+### 400 Bad Request
+
+```json
+{
+  "detail": "page must be >= 1"
+}
+```
+
+or
+
+```json
+{
+  "detail": "page_size must be between 1 and 200"
+}
+```
+
+### 401 Unauthorized
+
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+### 403 Forbidden
+
+```json
+{
+  "detail": "Permission denied: icsr:list required"
+}
+```
+
+## Related Endpoints
+
+- [Get Case Details](/api/icsr/update-case#get-case-details) - Retrieve a single case with enriched data
+- [Create Case](/api/icsr/create-case) - Create a new ICSR
+- [Bulk Duplicate Check](/api/icsr/overview#duplicate-detection) - Check duplicates for multiple cases

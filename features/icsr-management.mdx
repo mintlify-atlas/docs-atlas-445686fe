@@ -1,0 +1,317 @@
+---
+title: "ICSR Management"
+description: "Comprehensive Individual Case Safety Report management with full lifecycle tracking, duplicate detection, and regulatory compliance"
+---
+
+## Overview
+
+The ICSR (Individual Case Safety Report) module is the core of VIGIA's pharmacovigilance platform, enabling complete management of adverse event reports from initial intake through regulatory submission.
+
+<CardGroup cols={2}>
+  <Card title="Full Lifecycle Tracking" icon="arrows-spin">
+    Track cases from intake → evaluation → submission → follow-up
+  </Card>
+  <Card title="Duplicate Detection" icon="copy">
+    AI-powered duplicate detection with configurable matching algorithms
+  </Card>
+  <Card title="Multi-Product Support" icon="pills">
+    Manage suspect products, concomitant medications, and product details
+  </Card>
+  <Card title="Regulatory Export" icon="file-export">
+    Generate DIGEMID-compliant reports and E2B XML exports
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### Case Creation and Data Entry
+
+Create comprehensive case reports with structured data collection:
+
+<Steps>
+  <Step title="Patient Information">
+    Record patient demographics, initials (anonymized), age, sex, weight, and medical history
+    ```python
+    # API: POST /api/v1/icsr
+    {
+      "paciente_iniciales": "ABC",
+      "paciente_edad": 45,
+      "paciente_sexo": "Femenino",
+      "paciente_peso": 68.5,
+      "paciente_diagnostico_principal": "Hipertensión"
+    }
+    ```
+  </Step>
+  
+  <Step title="Product Details">
+    Add suspect products and concomitant medications with complete pharmaceutical data
+    - Product name, active ingredient (IFA), pharmaceutical form
+    - Registration number, batch number, administration route
+    - Dosage, frequency, start/end dates
+    - Re-challenge and de-challenge information
+  </Step>
+  
+  <Step title="Adverse Event Description">
+    Document the adverse event with narrative description, dates, severity, and outcome
+  </Step>
+  
+  <Step title="Reporter Information">
+    Capture reporter details including contact information, occupation, and notification source
+  </Step>
+</Steps>
+
+### ICSR Workflow States
+
+Cases progress through defined workflow states:
+
+| Estado | Description | Actions Available |
+|--------|-------------|------------------|
+| **Pendiente** | Initial intake, awaiting review | Edit, Assign |
+| **En progreso** | Under evaluation | Add follow-up, Request info |
+| **Completado** | Evaluation complete | Export, Submit |
+| **Enviado** | Submitted to regulatory authority | Track submission |
+
+### Duplicate Detection
+
+VIGIA uses advanced algorithms to detect potential duplicate cases:
+
+```python
+# API: GET /api/v1/icsr/{icsr_id}/duplicates?days_window=60
+```
+
+**Matching Criteria:**
+- Patient initials + Date of birth + Event start date + Product (90% match)
+- Individual criteria weighted:
+  - Same initials: +20%
+  - Same date of birth: +25%
+  - Same event start date: +20%
+  - Same suspect product: +20%
+  - Narrative similarity (NLP): up to +25%
+
+**Duplicate Status Classification:**
+- **Score ≥ 80%**: Duplicate (red flag)
+- **Score 45-79%**: Review required (yellow flag)
+- **Score < 45%**: Unique (green)
+
+<Note>
+Users can manually override duplicate detection decisions. All overrides are audited.
+</Note>
+
+### Product Registry Integration
+
+Automatic enrichment from product catalog:
+
+```python
+# When a registration number is entered, VIGIA automatically fetches:
+# - Laboratory/manufacturer
+# - Registration expiration date
+# - Pharmaceutical form details
+
+# Source: backend/app/routers/icsr.py:271-302
+product_data = get_product_by_rs(db, registration_number)
+```
+
+### Multi-Event Support
+
+Each ICSR can track multiple adverse events with individual MedDRA coding:
+
+```python
+# API: PUT /api/v1/icsr/{icsr_id}/eventos
+{
+  "eventos": [
+    {
+      "texto": "Náuseas severas",
+      "fecha_inicio": "2024-01-15",
+      "gravedad": "Grave",
+      "causalidad": "Posible",
+      "meddra_pt_code": "10028813",
+      "meddra_pt_term": "Nausea"
+    },
+    {
+      "texto": "Vómitos persistentes",
+      "fecha_inicio": "2024-01-16",
+      "gravedad": "Moderada",
+      "causalidad": "Probable"
+    }
+  ]
+}
+```
+
+<Warning>
+When updating eventos, the entire array is replaced. Include all events in your update payload.
+</Warning>
+
+## API Endpoints
+
+### List and Search
+
+```bash
+GET /api/v1/icsr?page=1&page_size=20&q=search_term&fecha_desde=2024-01-01&fecha_hasta=2024-12-31
+```
+
+**Query Parameters:**
+- `q`: Search across patient initials, products, reporter name
+- `fecha_desde` / `fecha_hasta`: Filter by event start date
+- `order_by`: Sort field (default: `id`)
+- `order_dir`: `asc` or `desc`
+
+**Response:**
+```json
+{
+  "items": [...],
+  "total": 145,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+### Get Single ICSR
+
+```bash
+GET /api/v1/icsr/{icsr_id}
+```
+
+Returns complete case data with:
+- All related products (suspect + concomitant)
+- All follow-up records
+- All adverse events with MedDRA coding
+- Product catalog enrichment data
+
+### Create ICSR
+
+```bash
+POST /api/v1/icsr
+Content-Type: application/json
+
+{
+  "paciente_iniciales": "JDR",
+  "paciente_edad": 52,
+  "paciente_sexo": "Masculino",
+  "producto_sospechoso": "Paracetamol 500mg",
+  "fecha_inicio_evento": "2024-03-01",
+  "descripcion_evento": "Paciente presenta erupción cutánea...",
+  "gravedad": "Moderada",
+  "reportante_nombre": "Dr. Juan Pérez",
+  "reportante_ocupacion": "Médico",
+  "productos": [
+    {
+      "nombre_producto": "Paracetamol",
+      "ifa": "Paracetamol",
+      "dosis_frecuencia": "500mg cada 8h",
+      "fecha_inicio": "2024-02-28"
+    }
+  ]
+}
+```
+
+<Note>
+**Auto-notifications**: When a new ICSR is created, VIGIA automatically sends email notifications to configured stakeholders (Pharmacovigilance team, QA, etc.) based on environment variables:
+- `ICSR_NOTIFY_CARGOS`: Job positions to notify
+- `ICSR_NOTIFY_AREAS`: Departments to notify
+- `ICSR_NOTIFY_EMAILS`: Additional email addresses
+</Note>
+
+### Update ICSR
+
+```bash
+PUT /api/v1/icsr/{icsr_id}
+```
+
+Updates only the fields provided (partial update). Related arrays (productos, concomitantes, seguimientos) are only replaced if explicitly included in the payload.
+
+```bash
+PUT /api/v1/icsr/{icsr_id}/full
+```
+
+Full replacement mode - always replaces related arrays even if provided.
+
+### Export to PDF
+
+```bash
+GET /api/v1/icsr/{icsr_id}/export/digemid-pdf
+```
+
+Generates a DIGEMID-compliant causality report PDF using the template system.
+
+**Template location:** `backend/app/templates/docs/INFORME_CAUSALIDAD.docx`
+
+### Delete ICSR (Secure)
+
+```bash
+DELETE /api/v1/icsr/{icsr_id}
+Content-Type: application/json
+
+{
+  "password": "user_password"
+}
+```
+
+<Warning>
+**Security requirement**: Deletion requires the current user's password for confirmation. This prevents accidental deletions.
+</Warning>
+
+Before deletion, check dependencies:
+
+```bash
+GET /api/v1/icsr/{icsr_id}/delete-summary
+```
+
+Returns counts of:
+- Follow-up messages
+- Detail snapshots
+- Related records
+
+## Follow-up Management
+
+Automatic follow-up for missing information:
+
+```python
+# System automatically:
+# 1. Detects missing required fields
+# 2. Extracts reporter email from contact info
+# 3. Sends follow-up request
+# 4. Logs outgoing message
+# 5. Updates case state to "En progreso"
+
+# Source: backend/app/routers/icsr.py:305-358
+```
+
+**Missing fields detection:**
+- Patient: Date of birth, diagnostic, outcome
+- Product: Batch number, dates, re-challenge info
+- Event: Detailed narrative, lab results
+
+## Code References
+
+| Feature | Implementation |
+|---------|---------------|
+| ICSR Model | `backend/app/models/icsr.py:14-254` |
+| Router (CRUD) | `backend/app/routers/icsr.py:629-1073` |
+| Duplicate Detection | `backend/app/routers/icsr.py:389-480` |
+| Product Enrichment | `backend/app/routers/icsr.py:271-302` |
+| Auto Follow-up | `backend/app/routers/icsr.py:305-358` |
+| Notifications | `backend/app/routers/icsr.py:213-270` |
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Data Quality" icon="check">
+    - Always provide patient initials (anonymized)
+    - Use standardized product names
+    - Include registration numbers when available
+    - Document narrative in detail
+  </Card>
+  
+  <Card title="Workflow Management" icon="diagram-project">
+    - Review duplicate alerts before saving
+    - Complete causality assessment promptly
+    - Use follow-up system for missing data
+    - Export to PDF before submission
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Adverse Event Reporting](/features/adverse-event-reporting) - MedDRA coding and causality assessment
+- [Document Management](/features/document-management) - Attach supporting documents
+- [Surveillance](/features/surveillance) - Monitor for signals across cases

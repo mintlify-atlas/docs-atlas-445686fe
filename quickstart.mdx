@@ -1,80 +1,415 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start Guide
+description: Get VIGIA up and running in minutes with Docker Compose
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will help you quickly set up VIGIA pharmacovigilance platform using Docker Compose. You'll have a fully functional system running in less than 5 minutes.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+**Prerequisites**: Docker and Docker Compose installed on your system. [Install Docker →](https://docs.docker.com/get-docker/)
 </Note>
+
+## Quick Setup with Docker Compose
+
+<Steps>
+  <Step title="Clone and Navigate to Directory">
+    First, obtain the VIGIA source code and navigate to the project directory:
+    
+    ```bash
+    cd vigia-platform
+    ```
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Create a `.env` file in the root directory with your configuration:
+    
+    ```bash .env
+    # Database Configuration
+    DATABASE_URL=postgresql://postgres:postgres@db:5432/vigiadb
+    
+    # Security
+    SECRET_KEY=your-secret-key-change-in-production
+    JWT_ALGORITHM=HS256
+    ACCESS_TOKEN_EXPIRE_MINUTES=480
+    
+    # CORS (for development)
+    CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+    
+    # Default Admin User
+    DEFAULT_ADMIN_USERNAME=adminuser
+    DEFAULT_ADMIN_EMAIL=admin@local
+    DEFAULT_ADMIN_PASSWORD=changeme
+    
+    # Optional: AI Features
+    OPENAI_API_KEY=sk-your-openai-key
+    GEMINI_API_KEY=your-gemini-key
+    ```
+    
+    <Warning>
+    Make sure to change the `SECRET_KEY` and `DEFAULT_ADMIN_PASSWORD` in production environments!
+    </Warning>
+  </Step>
+
+  <Step title="Start the Platform">
+    Launch all services with Docker Compose:
+    
+    ```bash
+    docker-compose up -d
+    ```
+    
+    This will start:
+    - **PostgreSQL 15** database on port 5432
+    - **FastAPI backend** on port 8000
+    - Database migrations and table creation
+    - Default admin user creation
+    
+    <CodeGroup>
+    ```bash View Logs
+    docker-compose logs -f api
+    ```
+    
+    ```bash Check Status
+    docker-compose ps
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Verify Installation">
+    Check that all services are running:
+    
+    ```bash
+    # Check API health
+    curl http://localhost:8000/health
+    # Response: {"ok": true}
+    
+    # Check database connection
+    curl http://localhost:8000/healthz
+    # Response: {"status": "ok"}
+    ```
+  </Step>
+
+  <Step title="Access the API Documentation">
+    VIGIA includes interactive API documentation powered by FastAPI:
+    
+    - **Swagger UI**: http://localhost:8000/docs
+    - **ReDoc**: http://localhost:8000/redoc
+    
+    You can test all endpoints directly from the browser!
+  </Step>
+</Steps>
+
+## First Login
+
+Now that VIGIA is running, let's authenticate and access the system:
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=adminuser&password=changeme"
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    "http://localhost:8000/api/v1/auth/login",
+    data={
+        "username": "adminuser",
+        "password": "changeme"
+    }
+)
+
+token = response.json()["access_token"]
+print(f"Access Token: {token}")
+```
+
+```javascript JavaScript
+const response = await fetch('http://localhost:8000/api/v1/auth/login', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded',
+  },
+  body: new URLSearchParams({
+    username: 'adminuser',
+    password: 'changeme'
+  })
+});
+
+const { access_token } = await response.json();
+console.log('Access Token:', access_token);
+```
+</CodeGroup>
+
+<Note>
+Save the `access_token` returned - you'll need it for authenticated API requests. Include it in the `Authorization: Bearer <token>` header.
+</Note>
+
+## Create Your First ICSR
+
+Let's create a sample Individual Case Safety Report:
+
+```python
+import requests
+
+# Use the token from login
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json"
+}
+
+# Create ICSR payload
+icsr_data = {
+    "paciente_iniciales": "J.S.",
+    "paciente_edad": 45,
+    "paciente_sexo": "Masculino",
+    "paciente_peso": 75.5,
+    "reportante_nombre": "Dr. María González",
+    "reportante_ocupacion": "Médico",
+    "reportante_email": "dra.gonzalez@hospital.com",
+    "producto_sospechoso": "Paracetamol 500mg",
+    "descripcion_evento": "Paciente presentó urticaria generalizada 2 horas después de administración",
+    "fecha_inicio_evento": "2026-03-01",
+    "gravedad": "leve",
+    "estado": "nuevo"
+}
+
+response = requests.post(
+    "http://localhost:8000/api/v1/icsr",
+    headers=headers,
+    json=icsr_data
+)
+
+icsr = response.json()
+print(f"ICSR Created! ID: {icsr['id']}")
+```
+
+<CodeGroup>
+```bash View Response
+{
+  "id": 1,
+  "numero": "ICSR-2026-001",
+  "paciente_iniciales": "J.S.",
+  "paciente_edad": 45,
+  "producto_sospechoso": "Paracetamol 500mg",
+  "gravedad": "leve",
+  "estado": "nuevo",
+  "created_at": "2026-03-03T10:30:00Z",
+  "updated_at": "2026-03-03T10:30:00Z"
+}
+```
+
+```bash cURL Alternative
+curl -X POST http://localhost:8000/api/v1/icsr \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paciente_iniciales": "J.S.",
+    "paciente_edad": 45,
+    "paciente_sexo": "Masculino",
+    "producto_sospechoso": "Paracetamol 500mg",
+    "descripcion_evento": "Urticaria generalizada",
+    "fecha_inicio_evento": "2026-03-01",
+    "gravedad": "leve",
+    "estado": "nuevo"
+  }'
+```
+</CodeGroup>
+
+## Retrieve and List ICSRs
+
+Fetch the ICSRs you've created:
+
+```python
+# Get all ICSRs (paginated)
+response = requests.get(
+    "http://localhost:8000/api/v1/icsr",
+    headers=headers,
+    params={"page": 1, "per_page": 10}
+)
+
+data = response.json()
+print(f"Total ICSRs: {data['total']}")
+for icsr in data['items']:
+    print(f"- {icsr['numero']}: {icsr['producto_sospechoso']}")
+
+# Get specific ICSR by ID
+icsr_id = 1
+response = requests.get(
+    f"http://localhost:8000/api/v1/icsr/{icsr_id}",
+    headers=headers
+)
+icsr = response.json()
+print(f"ICSR Details: {icsr['descripcion_evento']}")
+```
+
+## Upload and Process Document with OCR
+
+VIGIA can extract adverse event information from documents:
+
+```python
+import requests
+from pathlib import Path
+
+# Upload a document for OCR processing
+file_path = "adverse_event_report.pdf"
+
+with open(file_path, "rb") as f:
+    files = {"file": (Path(file_path).name, f, "application/pdf")}
+    
+    response = requests.post(
+        "http://localhost:8000/api/v1/ocr/extract",
+        headers={"Authorization": f"Bearer {token}"},
+        files=files
+    )
+
+ocr_result = response.json()
+print(f"Extracted Text: {ocr_result['text'][:200]}...")  # First 200 chars
+
+# Use NLP to extract structured data
+response = requests.post(
+    "http://localhost:8000/api/v1/nlp/extract",
+    headers=headers,
+    json={"text": ocr_result["text"], "language": "es"}
+)
+
+extracted_data = response.json()
+print(f"Extracted Events: {extracted_data['events']}")
+```
+
+<Note>
+**OCR Requirements**: For OCR functionality, ensure Tesseract and Poppler are installed:
+
+```bash
+# Ubuntu/Debian
+apt-get install tesseract-ocr tesseract-ocr-spa poppler-utils
+
+# macOS
+brew install tesseract tesseract-lang poppler
+```
+</Note>
+
+## Configure Multi-Tenant (Optional)
+
+VIGIA supports multi-tenant architecture for managing multiple organizations:
+
+```python
+# app/core/config.py configuration
+
+MASTER_DATABASE_URL = "postgresql://user:pass@localhost/vigia_master"
+TENANT_DB_TEMPLATE = "postgresql://user:pass@localhost/{db_name}"
+
+# Create tenant database
+import requests
+
+response = requests.post(
+    "http://localhost:8000/api/v1/admin/clientes",
+    headers=headers,
+    json={
+        "nombre": "Hospital Central",
+        "db_name": "hospital_central",
+        "subdomain": "hospital",
+        "plan": "enterprise"
+    }
+)
+
+tenant = response.json()
+print(f"Tenant created: {tenant['subdomain']}.vigia.com")
+```
+
+## Next Steps
+
+Congratulations! You now have VIGIA running. Here's what to explore next:
+
+<CardGroup cols={2}>
+  <Card title="Full Installation Guide" icon="download" href="/installation">
+    Learn about production deployment and advanced configuration
+  </Card>
+  <Card title="ICSR Management" icon="file-medical" href="/features/icsr-management">
+    Deep dive into case management features
+  </Card>
+  <Card title="IPS Reports" icon="chart-line" href="/features/ips-reports">
+    Generate periodic safety update reports
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/authentication/overview">
+    Complete API documentation
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database Connection Issues">
+    If the API can't connect to PostgreSQL:
+    
+    ```bash
+    # Check database is running
+    docker-compose ps db
+    
+    # View database logs
+    docker-compose logs db
+    
+    # Verify connection string in .env
+    DATABASE_URL=postgresql://postgres:postgres@db:5432/vigiadb
+    ```
+  </Accordion>
+  
+  <Accordion title="Port Already in Use">
+    If ports 8000 or 5432 are already in use:
+    
+    ```yaml docker-compose.yml
+    services:
+      api:
+        ports:
+          - "8001:8000"  # Change external port
+      db:
+        ports:
+          - "5433:5432"  # Change external port
+    ```
+  </Accordion>
+  
+  <Accordion title="Authentication Errors">
+    If login fails:
+    
+    1. Check the default admin credentials in `.env`
+    2. Ensure the database was properly initialized
+    3. Check API logs: `docker-compose logs api`
+    4. Recreate admin user:
+    
+    ```bash
+    docker-compose exec api python create_user.py
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Commands
+
+```bash
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (fresh start)
+docker-compose down -v
+
+# Rebuild containers
+docker-compose up -d --build
+
+# View API logs
+docker-compose logs -f api
+
+# Access database shell
+docker-compose exec db psql -U postgres -d vigiadb
+
+# Run database migrations
+docker-compose exec api alembic upgrade head
+```
+
+<Warning>
+Always backup your database before running migrations or updates in production:
+
+```bash
+docker-compose exec db pg_dump -U postgres vigiadb > backup.sql
+```
+</Warning>

@@ -1,0 +1,255 @@
+---
+title: Introduction to VIGIA
+description: Comprehensive pharmacovigilance platform for adverse event reporting, ICSR management, and IPS report generation
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.png"
+  alt="VIGIA Platform"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.png"
+  alt="VIGIA Platform"
+/>
+
+## Welcome to VIGIA
+
+VIGIA is a comprehensive pharmacovigilance platform designed for healthcare organizations, pharmaceutical companies, and regulatory agencies to manage adverse event reporting, Individual Case Safety Reports (ICSRs), and Periodic Safety Update Reports (IPS).
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get up and running with VIGIA in minutes
+  </Card>
+  <Card
+    title="Installation Guide"
+    icon="download"
+    href="/installation"
+  >
+    Detailed setup instructions for development and production
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api/authentication/overview"
+  >
+    Complete API documentation for integrations
+  </Card>
+  <Card
+    title="User Guides"
+    icon="book-open"
+    href="/guides/case-intake"
+  >
+    Learn how to use VIGIA's powerful features
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### ICSR Management
+
+Manage Individual Case Safety Reports with comprehensive data capture:
+
+- Patient information (demographics, medical history)
+- Adverse event details with MedDRA coding
+- Product information with normalization
+- Causality assessment (Karch-Lasagna, FT42)
+- Follow-up tracking and automated reminders
+- Duplicate detection and management
+
+### IPS Report Generation
+
+Automated Periodic Safety Update Report generation:
+
+- Template-based DOCX export using industry standards
+- Multi-source data aggregation (local + global surveillance)
+- Regulatory intelligence from EMA, AEMPS, FDA
+- Literature search integration (PubMed, SciELO, LILACS)
+- Benefit-risk analysis with AI assistance
+
+### OCR & NLP Extraction
+
+Intelligent document processing:
+
+```python
+# Example: OCR service with multi-format support
+from app.services.ocr_service import ocr_file
+
+# Extract text from PDF, images, or Office documents
+text = ocr_file("/path/to/document.pdf")
+
+# NLP extraction for adverse events
+from app.services.openai_extractor import extract_adverse_event
+
+events = await extract_adverse_event(
+    text=text,
+    model="gpt-4",
+    language="es"
+)
+```
+
+### Multi-Tenant Architecture
+
+Secure tenant isolation with PostgreSQL:
+
+```python
+# Automatic tenant routing based on subdomain
+# cliente1.vigia.com -> cliente1_db
+# cliente2.vigia.com -> cliente2_db
+
+from app.core.database import get_tenant_db
+
+db = get_tenant_db(tenant="cliente1")
+```
+
+### Surveillance & Signal Detection
+
+Real-time pharmacovigilance monitoring:
+
+- VigiAccess integration for global reporting trends
+- Automated literature surveillance
+- Signal detection algorithms
+- Custom alert configuration
+- Email notifications for critical events
+
+## Platform Architecture
+
+<CardGroup cols={2}>
+  <Card title="Backend" icon="server">
+    **FastAPI** + **PostgreSQL**
+    
+    - RESTful API with OpenAPI docs
+    - SQLAlchemy ORM with Alembic migrations
+    - Celery for background tasks
+    - JWT authentication with role-based access
+  </Card>
+  <Card title="Frontend" icon="window">
+    **React** + **Vite**
+    
+    - Modern component architecture
+    - CoreUI design system
+    - React Router for navigation
+    - Axios for API communication
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+### Backend Technologies
+
+- **FastAPI**: Modern Python web framework with automatic API documentation
+- **PostgreSQL 15**: Robust relational database with full-text search
+- **SQLAlchemy**: Python SQL toolkit and ORM
+- **Pydantic**: Data validation using Python type annotations
+- **Celery**: Distributed task queue for background jobs
+- **Redis**: Caching and message broker
+
+### AI/ML Integration
+
+- **OpenAI GPT-4**: Advanced NLP for event extraction and analysis
+- **Google Gemini**: Alternative LLM for text processing
+- **Tesseract OCR**: Open-source OCR engine for document digitization
+- **PyMuPDF**: PDF text extraction and manipulation
+
+### External Integrations
+
+- **VigiAccess API**: WHO global ICSR database
+- **PubMed**: Medical literature search
+- **SciELO**: Latin American scientific journals
+- **LILACS**: Health literature database
+- **Regulatory APIs**: EMA, AEMPS, FDA data sources
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Pharmaceutical Companies">
+    - Manage post-marketing surveillance programs
+    - Generate IPS reports for regulatory submissions
+    - Track adverse events across product portfolio
+    - Automate follow-up communications
+    - Integrate with existing safety databases
+  </Accordion>
+  
+  <Accordion title="Healthcare Institutions">
+    - Centralized adverse event reporting
+    - Patient safety monitoring
+    - Clinical trial safety management
+    - Regulatory compliance reporting
+    - Quality management integration
+  </Accordion>
+  
+  <Accordion title="Regulatory Agencies">
+    - National pharmacovigilance database
+    - Multi-organization data collection
+    - Signal detection and analysis
+    - Regulatory decision support
+    - Public reporting dashboards
+  </Accordion>
+</AccordionGroup>
+
+## Security & Compliance
+
+<Note>
+VIGIA implements industry best practices for healthcare data security:
+
+- JWT-based authentication with role-based access control (RBAC)
+- Multi-tenant data isolation at the database level
+- Comprehensive audit trails for all actions
+- HTTPS encryption for data in transit
+- Database encryption at rest
+- GDPR-compliant data handling
+</Note>
+
+## Getting Started
+
+Ready to start using VIGIA? Follow these steps:
+
+<Steps>
+  <Step title="Set Up Your Environment">
+    Install Docker and Docker Compose, or prepare your local Python and Node.js environment.
+    
+    [View Installation Guide →](/installation)
+  </Step>
+  
+  <Step title="Quick Start">
+    Run VIGIA with Docker Compose and create your first ICSR in minutes.
+    
+    [View Quick Start →](/quickstart)
+  </Step>
+  
+  <Step title="Explore the API">
+    Discover VIGIA's comprehensive REST API with interactive documentation.
+    
+    [View API Reference →](/api/authentication/overview)
+  </Step>
+</Steps>
+
+## Community & Support
+
+VIGIA is actively developed and maintained. For questions, issues, or contributions:
+
+- **Documentation**: You're reading it!
+- **API Docs**: Available at `http://localhost:8000/docs` when running
+- **GitHub Issues**: Report bugs and request features
+- **Email Support**: Contact your administrator
+
+## What's Next?
+
+Explore the documentation to learn more:
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" icon="play" href="/quickstart">
+    Get VIGIA running in 5 minutes
+  </Card>
+  <Card title="ICSR Management" icon="file-medical" href="/features/icsr-management">
+    Learn about case management
+  </Card>
+  <Card title="IPS Reports" icon="chart-line" href="/features/ips-reports">
+    Generate periodic safety reports
+  </Card>
+</CardGroup>

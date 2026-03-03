@@ -1,0 +1,534 @@
+---
+title: 'IPS Data Sources'
+description: 'Manage literature references and data sources for IPS reports'
+---
+
+## Overview
+
+The IPS data sources module manages literature references from scientific databases. It supports bulk import, deduplication, and automatic KPI calculation for tracking literature coverage.
+
+## Supported Sources
+
+- **PMC** - PubMed Central
+- **LILACS** - Latin American and Caribbean Health Sciences Literature
+- **SCIELO-WEB** - Scientific Electronic Library Online
+- **OTRA** - Other sources
+
+## List Literature Sources
+
+<CodeGroup>
+```http GET /api/v1/ips/{report_id}/fuentes
+GET /api/v1/ips/123/fuentes
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/123/fuentes",
+    headers={"Authorization": f"Bearer {token}"}
+)
+sources = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="report_id" type="integer" required>
+  IPS report ID
+</ParamField>
+
+### Response
+
+Returns an array of literature sources sorted by year (descending) and title:
+
+```json Response Example
+[
+  {
+    "id": 1001,
+    "source": "PMC",
+    "title": "Safety profile of paracetamol in pediatric patients",
+    "citation": "Smith J, et al. (2024). Safety profile of paracetamol in pediatric patients. J Pharmacovigilance. doi: 10.1234/jpv.2024.001",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/12345678",
+    "year": 2024,
+    "journal": "Journal of Pharmacovigilance",
+    "abstract": "This study evaluates the safety profile of paracetamol...",
+    "detected_total": 1,
+    "created_at": "2024-03-15T10:30:00Z"
+  },
+  {
+    "id": 1002,
+    "source": "LILACS",
+    "title": "Reacciones adversas al paracetamol en América Latina",
+    "citation": "García M, et al. (2023). Reacciones adversas al paracetamol en América Latina. Rev Farmacol.",
+    "url": "https://lilacs.bvsalud.org/resource/123",
+    "year": 2023,
+    "journal": "Revista de Farmacología",
+    "abstract": "Estudio retrospectivo de reacciones adversas...",
+    "detected_total": 3,
+    "created_at": "2024-03-15T10:35:00Z"
+  }
+]
+```
+
+<ResponseField name="id" type="integer">
+  Source record ID
+</ResponseField>
+
+<ResponseField name="source" type="string">
+  Database source: `PMC`, `LILACS`, `SCIELO-WEB`, or `OTRA`
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Article title
+</ResponseField>
+
+<ResponseField name="citation" type="string">
+  Full bibliographic citation
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  Article URL
+</ResponseField>
+
+<ResponseField name="year" type="integer">
+  Publication year
+</ResponseField>
+
+<ResponseField name="journal" type="string">
+  Journal name
+</ResponseField>
+
+<ResponseField name="abstract" type="string">
+  Article abstract or summary
+</ResponseField>
+
+<ResponseField name="detected_total" type="integer">
+  Number of times this article was detected in searches
+</ResponseField>
+
+---
+
+## Save Literature Sources (Bulk)
+
+Save multiple literature references with optional server-side translation.
+
+<CodeGroup>
+```http POST /api/v1/ips/{report_id}/fuentes/bulk
+POST /api/v1/ips/123/fuentes/bulk
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "title": "Safety profile of paracetamol",
+      "collection": "PMC",
+      "year": 2024,
+      "url": "https://pubmed.ncbi.nlm.nih.gov/12345678",
+      "journal": "J Pharmacovigilance",
+      "abstract": "This study evaluates safety...",
+      "detected_total": 1
+    },
+    {
+      "title": "Adverse reactions to paracetamol",
+      "collection": "LILACS",
+      "year": 2023,
+      "url": "https://lilacs.bvsalud.org/resource/123",
+      "detected_total": 3
+    }
+  ],
+  "translate": false,
+  "target_lang": "es"
+}
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips/123/fuentes/bulk",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "items": [
+            {
+                "title": "Safety profile of paracetamol",
+                "collection": "PMC",
+                "year": 2024,
+                "url": "https://pubmed.ncbi.nlm.nih.gov/12345678"
+            }
+        ],
+        "translate": False
+    }
+)
+result = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="report_id" type="integer" required>
+  IPS report ID
+</ParamField>
+
+### Request Body
+
+<ParamField body="items" type="array" required>
+  Array of literature items to save
+</ParamField>
+
+<ParamField body="translate" type="boolean" default={false}>
+  Enable server-side translation of titles and abstracts
+</ParamField>
+
+<ParamField body="target_lang" type="string" default="es">
+  Target language code for translation (e.g., "es", "en")
+</ParamField>
+
+### Item Schema
+
+Each item in the `items` array should contain:
+
+<ParamField body="title" type="string">
+  Article title
+</ParamField>
+
+<ParamField body="collection" type="string">
+  Source database: `PMC`, `LILACS`, `SCIELO`, or other
+</ParamField>
+
+<ParamField body="source" type="string">
+  Alternative to `collection` - normalized source identifier
+</ParamField>
+
+<ParamField body="url" type="string">
+  Article URL
+</ParamField>
+
+<ParamField body="year" type="integer">
+  Publication year (0-9999)
+</ParamField>
+
+<ParamField body="journal" type="string">
+  Journal name
+</ParamField>
+
+<ParamField body="abstract" type="string">
+  Article abstract or summary
+</ParamField>
+
+<ParamField body="citation" type="string">
+  Pre-formatted citation (auto-generated if not provided)
+</ParamField>
+
+<ParamField body="detected_total" type="integer" default={1}>
+  Number of times detected in search results
+</ParamField>
+
+### Response
+
+```json
+{
+  "saved": 2,
+  "kpis": {
+    "literaturas_detected": 150,
+    "pmc_detected": 80,
+    "lilacs_detected": 40,
+    "scielo_detected": 30
+  },
+  "total_now": 152
+}
+```
+
+<ResponseField name="saved" type="integer">
+  Number of items processed in this request
+</ResponseField>
+
+<ResponseField name="kpis" type="object">
+  Updated KPI metrics for literature coverage
+</ResponseField>
+
+<ResponseField name="total_now" type="integer">
+  Total number of sources for this report after save
+</ResponseField>
+
+### Deduplication
+
+The endpoint automatically deduplicates based on `(url, title, year)` combinations:
+
+- Exact duplicates are skipped
+- Existing entries are updated if new data is richer (longer citation, has abstract, etc.)
+- Trash entries (navigation links, T&C pages) are filtered out
+
+---
+
+## Save Literature Sources (Simple)
+
+Compatibility endpoint for simpler bulk save operations.
+
+<CodeGroup>
+```http POST /api/v1/ips/{report_id}/fuentes
+POST /api/v1/ips/123/fuentes?replace=false
+Authorization: Bearer <token>
+Content-Type: application/json
+
+[
+  {
+    "title": "Safety profile of paracetamol",
+    "collection": "PMC",
+    "year": 2024,
+    "url": "https://pubmed.ncbi.nlm.nih.gov/12345678"
+  }
+]
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips/123/fuentes",
+    headers={"Authorization": f"Bearer {token}"},
+    params={"replace": False},
+    json=[
+        {
+            "title": "Safety profile of paracetamol",
+            "collection": "PMC",
+            "year": 2024
+        }
+    ]
+)
+result = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="report_id" type="integer" required>
+  IPS report ID
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="replace" type="boolean" default={false}>
+  If `true`, delete all existing sources before inserting new ones
+</ParamField>
+
+### Request Body
+
+Array of source items (same schema as bulk endpoint).
+
+### Response
+
+```json
+{
+  "saved": 1,
+  "kpis": {
+    "literaturas_detected": 151,
+    "pmc_detected": 81,
+    "lilacs_detected": 40,
+    "scielo_detected": 30
+  },
+  "total_now": 153
+}
+```
+
+---
+
+## Delete All Sources
+
+<CodeGroup>
+```http DELETE /api/v1/ips/{ips_id}/fuentes
+DELETE /api/v1/ips/123/fuentes
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.delete(
+    "https://api.vigia.com/api/v1/ips/123/fuentes",
+    headers={"Authorization": f"Bearer {token}"}
+)
+result = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="ips_id" type="integer" required>
+  IPS report ID
+</ParamField>
+
+### Response
+
+```json
+{
+  "deleted": 153
+}
+```
+
+---
+
+## Cleanup Citations
+
+Clean and normalize citation formatting for all sources in a report.
+
+<CodeGroup>
+```http POST /api/v1/ips/{ips_id}/fuentes/cleanup
+POST /api/v1/ips/123/fuentes/cleanup
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips/123/fuentes/cleanup",
+    headers={"Authorization": f"Bearer {token}"}
+)
+result = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="ips_id" type="integer" required>
+  IPS report ID
+</ParamField>
+
+### Response
+
+```json
+{
+  "cleaned": 42
+}
+```
+
+<ResponseField name="cleaned" type="integer">
+  Number of citations cleaned/normalized
+</ResponseField>
+
+### What Gets Cleaned
+
+- Standardizes author formatting
+- Normalizes journal abbreviations
+- Formats DOI links consistently
+- Removes duplicate whitespace
+- Standardizes year formatting
+
+---
+
+## KPI Metrics
+
+The system automatically calculates and updates these KPI metrics when sources are saved:
+
+### Report-Level KPIs
+
+Stored in the `ips_report` table:
+
+- `literaturas_detected` - Total literature items detected
+- `pmc_detected` - Items from PubMed Central
+- `lilacs_detected` - Items from LILACS
+- `scielo_detected` - Items from SciELO
+
+### Access KPIs
+
+KPIs are automatically updated when saving sources and included in report responses:
+
+```json
+{
+  "id": 123,
+  "producto_id": 456,
+  "periodo_inicio": "2024-01-01",
+  "periodo_fin": "2024-12-31",
+  "kpis": {
+    "literaturas_detected": 150,
+    "pmc_detected": 80,
+    "lilacs_detected": 40,
+    "scielo_detected": 30
+  }
+}
+```
+
+---
+
+## Citation Auto-Generation
+
+If a citation is not provided, the system auto-generates one using available fields:
+
+**Format:** `Authors. (Year). Title. Journal. DOI/URL`
+
+**Example:**
+
+```
+Smith J, García M. (2024). Safety profile of paracetamol in pediatric patients. Journal of Pharmacovigilance. doi: 10.1234/jpv.2024.001
+```
+
+**Field Priority:**
+
+1. Use `citation` if provided
+2. Use `cite` or `apa` field if available
+3. Build from: `authors/creators` + `year` + `title` + `journal` + `doi/url`
+
+---
+
+## Source Normalization
+
+Collection names are normalized to standard codes:
+
+| Input | Normalized |
+|-------|------------|
+| PMC, PubMed, PubMed Central | `PMC` |
+| LILACS, lilacs | `LILACS` |
+| SCIELO, SciELO, Scielo | `SCIELO-WEB` |
+| Any other value | `OTRA` |
+
+---
+
+## Translation Support
+
+When `translate: true` is set, the backend can automatically translate titles and abstracts:
+
+```json
+{
+  "items": [
+    {
+      "title": "Safety profile of paracetamol",
+      "abstract": "This study evaluates..."
+    }
+  ],
+  "translate": true,
+  "target_lang": "es"
+}
+```
+
+**Result:**
+
+```json
+{
+  "title": "Perfil de seguridad del paracetamol",
+  "abstract": "Este estudio evalúa..."
+}
+```
+
+**Requirements:**
+- Translation service must be configured at `/api/v1/nlp/translate/batch`
+- Uses same authentication token
+- Timeout: 40 seconds
+- Falls back to original text if translation fails
+
+---
+
+## Best Practices
+
+### Bulk Import
+
+1. Use `/fuentes/bulk` for large imports with deduplication
+2. Set `replace: false` to merge with existing data
+3. Include `detected_total` to track search result frequencies
+4. Provide DOIs when available for better citation quality
+
+### Citation Quality
+
+1. Include full journal names, not abbreviations
+2. Provide year for proper sorting
+3. Include abstracts for better context
+4. Use DOIs instead of PMIDs when possible
+
+### Performance
+
+1. Batch imports in chunks of 100-500 items
+2. Use translation sparingly (adds 40s overhead)
+3. Run cleanup after bulk imports, not during
+4. Query with pagination for reports with >1000 sources

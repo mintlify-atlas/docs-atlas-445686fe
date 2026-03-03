@@ -1,0 +1,146 @@
+---
+title: 'Process Document with OCR'
+api: 'POST /api/v1/ocr/preview'
+description: 'Extract text from PDF documents and images using Optical Character Recognition'
+---
+
+## Overview
+
+This endpoint processes uploaded documents (PDFs and images) and extracts text using OCR technology powered by Tesseract. The service automatically detects the document type and applies appropriate processing methods.
+
+## Supported File Formats
+
+- **Images**: PNG, JPG, JPEG, WEBP, TIF, TIFF
+- **Documents**: PDF (multi-page support)
+
+## Request
+
+<ParamField body="file" type="file" required>
+  The document or image file to process. Must be one of the supported formats.
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST https://api.vigia.com/api/v1/ocr/preview \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -F "file=@document.pdf"
+```
+
+```python
+import requests
+
+url = "https://api.vigia.com/api/v1/ocr/preview"
+files = {"file": open("document.pdf", "rb")}
+headers = {"Authorization": "Bearer YOUR_API_KEY"}
+
+response = requests.post(url, files=files, headers=headers)
+print(response.json())
+```
+
+## Response
+
+<ResponseField name="text" type="string">
+  The extracted text from the document. For multi-page PDFs, text from all pages is concatenated with newline separators.
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "text": "Paciente: C.R.\nEdad: 45 años\nSexo: Masculino\nPeso: 72 kg\n\nProducto sospechoso: Ibuprofeno 400 mg\nFecha de inicio: 2025-08-10\n\nEvento adverso: Presentó urticaria generalizada tras administración del medicamento.\n\nReportante: Dra. María González"
+}
+```
+
+## OCR Processing Details
+
+### Image Processing
+
+For image files, the service:
+1. Loads the image using OpenCV (if available) or PIL
+2. Converts to grayscale
+3. Applies Otsu's thresholding for better text detection
+4. Runs Tesseract OCR with Spanish and English language support
+
+### PDF Processing
+
+For PDF files, the service uses two strategies:
+
+**Primary Method**: pdf2image + Poppler
+- Converts each PDF page to high-resolution images
+- Applies OCR to each page individually
+- Concatenates results from all pages
+
+**Fallback Method**: PyMuPDF (fitz)
+- Rasterizes PDF pages at 200 DPI
+- Processes each page with Tesseract
+- Used when Poppler is not available
+
+## Language Support
+
+The OCR engine attempts text extraction in the following order:
+1. Spanish (`spa`)
+2. Spanish + English (`spa+eng`)
+3. English only (`eng`)
+4. Default language (fallback)
+
+## Configuration
+
+OCR behavior is configured via environment variables:
+
+- `TESSERACT_CMD`: Path to Tesseract executable
+- `POPPLER_PATH`: Path to Poppler utilities (for PDF processing)
+- `OCR_CONFIG`: Tesseract configuration (default: `--oem 3 --psm 6`)
+
+## Debug Endpoint
+
+To check OCR service configuration and available languages:
+
+```bash
+GET /api/v1/ocr/debug
+```
+
+Returns:
+```json
+{
+  "TESSERACT_CMD_env": "/usr/bin/tesseract",
+  "pytesseract_cmd": "/usr/bin/tesseract",
+  "tesseract_version": "tesseract 5.3.0",
+  "langs": ["eng", "spa", "spa_old"],
+  "POPPLER_PATH": "/usr/bin"
+}
+```
+
+## Error Handling
+
+<ResponseField name="error" type="string">
+  Error message if OCR processing fails
+</ResponseField>
+
+### Common Errors
+
+- **Unsupported file format**: The uploaded file type is not supported
+- **OCR disabled**: Tesseract is not properly installed or configured
+- **PDF processing failed**: Poppler/PyMuPDF dependencies missing
+- **Invalid file**: The uploaded file is corrupted or cannot be read
+
+## Best Practices
+
+1. **Image Quality**: Upload high-resolution images (300 DPI minimum) for best results
+2. **File Size**: Keep files under 10 MB for optimal processing time
+3. **Document Orientation**: Ensure text is properly oriented (not rotated)
+4. **Contrast**: High contrast between text and background improves accuracy
+5. **Multi-page PDFs**: Processing time increases linearly with page count
+
+## Performance
+
+- **Single page**: ~2-3 seconds
+- **Multi-page PDF**: ~2-3 seconds per page
+- **Large images**: ~3-5 seconds depending on resolution
+
+## Next Steps
+
+After extracting text with OCR, you can:
+
+- Use [Extract Data](/api/nlp/extract-data) to parse structured fields from the text
+- Use [Translate](/api/nlp/translate) to translate the extracted text to other languages

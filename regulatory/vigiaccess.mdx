@@ -1,0 +1,555 @@
+---
+title: 'VigiAccess Integration'
+description: 'WHO global pharmacovigilance database access and signal detection'
+icon: 'globe'
+---
+
+## Overview
+
+VIGIA integrates with VigiAccess, the WHO's global database of reported adverse drug reactions, to retrieve safety data and distribution statistics. The system supports both the unofficial protocol-based scraper and the official WHO-UMC API.
+
+## Key Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Drug Search" icon="pills">
+    Search for medicines by trade name or active ingredient
+  </Card>
+  <Card title="SOC Distribution" icon="chart-pie">
+    System Organ Class distribution with percentages and counts
+  </Card>
+  <Card title="Demographics" icon="users">
+    Geographic, age, sex, and temporal distributions
+  </Card>
+  <Card title="Signal Detection" icon="radar">
+    Identify disproportionate adverse event patterns
+  </Card>
+</CardGroup>
+
+## Architecture
+
+VIGIA supports two integration methods:
+
+<Tabs>
+  <Tab title="Protocol Scraper (Default)">
+    Unofficial scraper that mimics browser behavior to access VigiAccess data.
+    
+    **Pros:**
+    - No API key required
+    - Real-time data access
+    - Mirrors official web interface
+    
+    **Cons:**
+    - Subject to website changes
+    - Rate limited by session cookies
+  </Tab>
+  <Tab title="WHO-UMC API (Official)">
+    Official API access through WHO-UMC VigiBase.
+    
+    **Pros:**
+    - Stable, documented interface
+    - Higher rate limits
+    - Official support
+    
+    **Cons:**
+    - Requires API key (subscription)
+    - May have data access restrictions
+  </Tab>
+</Tabs>
+
+## Data Structure
+
+### SOC Distribution
+
+System Organ Class data with counts and percentages:
+
+```python
+@dataclass
+class SocRow:
+    soc: str                    # System Organ Class name
+    percent: Optional[float]    # Percentage of total reports
+    adr_count: Optional[int]    # Number of ADR reports
+```
+
+**Example Response:**
+```json
+{
+  "drug": "Atorvastatin",
+  "token": "cid-v1:xyz123",
+  "total_reports": 45230,
+  "soc_rows": [
+    {
+      "soc": "Musculoskeletal and connective tissue disorders",
+      "percent": 28.5,
+      "adr_count": 12890
+    },
+    {
+      "soc": "Nervous system disorders",
+      "percent": 18.2,
+      "adr_count": 8232
+    },
+    {
+      "soc": "Gastrointestinal disorders",
+      "percent": 15.7,
+      "adr_count": 7101
+    }
+  ],
+  "source": "VigiAccess (scraper no-oficial)"
+}
+```
+
+## Implementation
+
+### Protocol-Based Scraper
+
+<CodeGroup>
+```python backend/app/services/vigiaccess.py
+class VigiAccessScraper:
+    def __init__(self, base_url: str | None = None, timeout: float = 15.0, max_retries: int = 2):
+        """
+        Scraper that mimics browser behavior:
+        1) GET "/" → cookies (ASLBSA, ASLBSACORS)
+        2) POST /protocol/IProtocol/search (JSON → msgpack)
+        3) POST /protocol/IProtocol/distribution (JSON → msgpack)
+        """
+        default_base = "https://www.vigiaccess.org"
+        self.base_url = (base_url or default_base).rstrip("/")
+        self.timeout = timeout
+        self.max_retries = max_retries
+        
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            timeout=self.timeout,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/142.0.0.0",
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Accept-Language": "es-ES,es;q=0.9",
+            },
+        )
+    
+    def scrape_drug(self, term: str) -> Dict[str, Any]:
+        """
+        Main entry point for drug scraping.
+        Returns: {
+            "drug": label,
+            "token": encrypted_token,
+            "total_reports": int,
+            "soc_rows": [{soc, percent, adr_count}, ...],
+            "source": "VigiAccess (scraper no-oficial)"
+        }
+        """
+        term = term.strip()
+        if not term:
+            raise VigiAccessError("Debe indicar el nombre del fármaco")
+        
+        # 1) Search for drug candidates
+        candidates = self._search_drug(term)
+        chosen = self._pick_candidate(term, candidates)
+        logger.info("[VigiAccess] candidato elegido: label=%s token=%s",
+                    chosen["label"], chosen["token"])
+        
+        # 2) Fetch distribution data
+        raw_dist = self._fetch_distribution_raw(chosen["token"])
+        
+        # 3) Parse to SOC rows
+        soc_rows = self._parse_distribution_to_soc_rows(raw_dist)
+        
+        return {
+            "drug": chosen["label"],
+            "token": chosen["token"],
+            "total_reports": sum(r.adr_count or 0 for r in soc_rows),
+            "soc_rows": [
+                {"soc": r.soc, "percent": r.percent, "adr_count": r.adr_count}
+                for r in soc_rows
+            ],
+            "source": "VigiAccess (scraper no-oficial)",
+        }
+```
+
+```python Step 1: Session Setup
+def _ensure_session(self) -> None:
+    """
+    GET "/" to obtain session cookies (ASLBSA, ASLBSACORS).
+    """
+    logger.info("[VigiAccess] GET / para obtener cookies de sesión...")
+    resp = self._request("GET", "/")
+    if resp.status_code != 200:
+        raise VigiAccessError(f"No se pudo abrir VigiAccess (status {resp.status_code})")
+    logger.debug("[VigiAccess] cookies iniciales: %r", self.client.cookies)
+```
+
+```python Step 2: Drug Search
+def _search_drug(self, term: str) -> List[Dict[str, str]]:
+    """
+    POST /protocol/IProtocol/search with JSON ["atorvastatin"].
+    Returns list of candidates: [{token, label}, ...]
+    """
+    self._ensure_session()
+    
+    payload = [term]
+    headers = {
+        "Content-Type": "application/json; charset=UTF-8",
+        "Accept": "application/vnd.msgpack,application/json,*/*",
+        "Origin": self.base_url,
+        "Referer": f"{self.base_url}/",
+    }
+    
+    resp = self._request("POST", "/protocol/IProtocol/search",
+                         json=payload, headers=headers)
+    
+    if "application/vnd.msgpack" not in resp.headers.get("content-type", ""):
+        raise VigiAccessError(f"Tipo de respuesta inesperado: {resp.headers.get('content-type')}")
+    
+    data = msgpack.unpackb(resp.content, raw=False)
+    
+    candidates: List[Dict[str, str]] = []
+    for entry in data:
+        # Structure: [[0, [0, 'TOKEN']], [0, 'Label'], ...]
+        try:
+            token = entry[0][1][1]
+            label_raw = entry[1]
+            label = label_raw[-1] if isinstance(label_raw, list) else label_raw
+            label = str(label).strip()
+        except Exception:
+            continue
+        
+        if token and label:
+            candidates.append({"token": token, "label": label})
+    
+    if not candidates:
+        raise VigiAccessError(f"VigiAccess no devolvió candidatos para '{term}'")
+    
+    return candidates
+
+def _pick_candidate(self, term: str, candidates: List[Dict[str, str]]) -> Dict[str, str]:
+    """Pick best match (exact prefix match or first candidate)"""
+    term_lower = term.lower().strip()
+    for c in candidates:
+        if c["label"].lower().startswith(term_lower):
+            return c
+    return candidates[0]
+```
+
+```python Step 3: Distribution Data
+def _fetch_distribution_raw(self, token: str) -> Any:
+    """
+    POST to /protocol/IProtocol/distribution with drug token.
+    Body: JSON, Response: msgpack
+    """
+    payload = [{"DrugId": {"Encrypted": token}}]
+    headers = {
+        "Content-Type": "application/json; charset=UTF-8",
+        "Accept": "application/vnd.msgpack,application/json,*/*",
+        "Origin": self.base_url,
+        "Referer": f"{self.base_url}/",
+    }
+    
+    resp = self._request("POST", "/protocol/IProtocol/distribution",
+                         json=payload, headers=headers)
+    
+    if "application/vnd.msgpack" not in resp.headers.get("content-type", ""):
+        raise VigiAccessError(f"Tipo de respuesta inesperado: {resp.headers.get('content-type')}")
+    
+    data = msgpack.unpackb(resp.content, raw=False)
+    return data
+
+def _parse_distribution_to_soc_rows(self, data: Any) -> List[SocRow]:
+    """
+    Parse msgpack structure:
+    [
+      total_reports:int,
+      [
+        [[0,[0,'TOKEN1']], [0,'Blood and lymphatic system disorders'], 2291],
+        [[0,[0,'TOKEN2']], [0,'Cardiac disorders'], 6979],
+        ...
+      ],
+      ... (other tables: region, age, sex, year)
+    ]
+    """
+    if not isinstance(data, list) or len(data) < 2:
+        raise VigiAccessError("Formato inesperado en distribution")
+    
+    total_reports = data[0] if isinstance(data[0], int) else None
+    soc_table = data[1]
+    
+    rows: List[SocRow] = []
+    for entry in soc_table:
+        if not isinstance(entry, list) or len(entry) < 3:
+            continue
+        
+        label_part = entry[1]
+        count_part = entry[2]
+        
+        # Extract SOC name
+        soc_name = None
+        if isinstance(label_part, list):
+            for v in label_part:
+                if isinstance(v, str):
+                    soc_name = v
+        elif isinstance(label_part, str):
+            soc_name = label_part
+        
+        if not soc_name:
+            continue
+        
+        soc_name = self._clean_soc_name(soc_name)
+        
+        try:
+            adr_count = int(count_part)
+        except (TypeError, ValueError):
+            adr_count = None
+        
+        percent = None
+        if adr_count is not None and total_reports and total_reports > 0:
+            percent = adr_count * 100.0 / float(total_reports)
+        
+        rows.append(SocRow(soc=soc_name, percent=percent, adr_count=adr_count))
+    
+    rows.sort(key=lambda r: (r.adr_count or 0), reverse=True)
+    return rows
+```
+</CodeGroup>
+
+### WHO-UMC Official API
+
+<CodeGroup>
+```python backend/app/services/who_umc_vigiaccess_api.py
+API_BASE = "https://api.who-umc.org/vigibase/icsrstatistics"
+API_KEY = os.getenv("VIGIACCESS_API_KEY", "")
+
+async def get_dashboard_tables_for_tradename(tradename: str) -> Dict[str, Any]:
+    """
+    Fetch distribution tables from WHO-UMC API.
+    
+    Returns:
+        {
+            "query": tradename,
+            "geo": [{label, count, percent}, ...],
+            "sex": [{label, count, percent}, ...],
+            "age": [{label, count, percent}, ...],
+            "year": [{label, count, percent}, ...],
+            "errors": {key: error_msg, ...}
+        }
+    """
+    t = (tradename or "").strip()
+    if not t:
+        raise WhoUmcVigiAccessError("tradename vacío")
+    
+    mapping = {
+        "geo": "dimensions/continent",
+        "sex": "dimensions/sex",
+        "age": "dimensions/agegroup",
+        "year": "dimensions/year",
+    }
+    
+    out = {"query": t, "geo": [], "sex": [], "age": [], "year": []}
+    errors: Dict[str, str] = {}
+    
+    for key, path in mapping.items():
+        try:
+            js = await _get_json(path, params={"tradename": t})
+            out[key] = _normalize_rows(js)
+        except Exception as e:
+            errors[key] = str(e)
+    
+    if errors and all(len(out[k]) == 0 for k in ("geo", "sex", "age", "year")):
+        raise WhoUmcVigiAccessError(f"No pude obtener tablas. Detalle: {errors}")
+    
+    out["errors"] = errors
+    return out
+
+async def _get_json(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    url = f"{API_BASE}/{path.lstrip('/')}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(url, headers=_headers(), params=params or {})
+        if r.status_code >= 400:
+            raise WhoUmcVigiAccessError(
+                f"WHO-UMC API {r.status_code} url={url} params={params} body={r.text[:200]}"
+            )
+        return r.json()
+
+def _headers() -> Dict[str, str]:
+    if not API_KEY:
+        raise WhoUmcVigiAccessError("Falta VIGIACCESS_API_KEY en .env")
+    return {
+        "Accept": "application/json",
+        "X-API-Key": API_KEY,
+        "Ocp-Apim-Subscription-Key": API_KEY,
+    }
+```
+</CodeGroup>
+
+## Data Cleaning
+
+VigiAccess returns strings with invisible Unicode characters:
+
+```python
+@staticmethod
+def _clean_soc_name(name: str) -> str:
+    """
+    Remove invisible characters (zero-width, etc.) from strings.
+    Removes category "Cf" (format) characters like ZERO WIDTH SPACE.
+    """
+    import re
+    return re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", name).strip()
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Protocol scraper base URL (optional)
+VIGIACCESS_BASE_URL=https://www.vigiaccess.org
+
+# WHO-UMC Official API (optional, for official API method)
+VIGIACCESS_API_BASE_URL=https://api.who-umc.org/vigibase/icsrstatistics
+VIGIACCESS_API_KEY=your_api_key_here
+VIGIACCESS_API_TIMEOUT=30
+```
+
+### Scraper Configuration
+
+```python
+class VigiAccessScraper:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        timeout: float = 15.0,     # Request timeout
+        max_retries: int = 2,      # Retry failed requests
+    ):
+        ...
+```
+
+## API Endpoints
+
+### Scrape Drug (Protocol Method)
+
+```http
+GET /api/v1/vigiaccess/scrape?q={drug_name}
+```
+
+**Response:**
+```json
+{
+  "drug": "Atorvastatin",
+  "token": "cid-v1:xyz123",
+  "total_reports": 45230,
+  "soc_rows": [
+    {
+      "soc": "Musculoskeletal and connective tissue disorders",
+      "percent": 28.5,
+      "adr_count": 12890
+    },
+    {
+      "soc": "Nervous system disorders",
+      "percent": 18.2,
+      "adr_count": 8232
+    }
+  ],
+  "source": "VigiAccess (scraper no-oficial)"
+}
+```
+
+### WHO-UMC API (Official Method)
+
+```http
+GET /api/v1/vigiaccess/official?tradename={name}
+```
+
+**Response:**
+```json
+{
+  "query": "atorvastatin",
+  "geo": [
+    {"label": "Europe", "count": 15234, "percent": 33.7},
+    {"label": "Americas", "count": 12456, "percent": 27.5}
+  ],
+  "sex": [
+    {"label": "Female", "count": 24567, "percent": 54.3},
+    {"label": "Male", "count": 20663, "percent": 45.7}
+  ],
+  "age": [
+    {"label": "65-74 years", "count": 14523, "percent": 32.1},
+    {"label": "55-64 years", "count": 11234, "percent": 24.8}
+  ],
+  "year": [
+    {"label": "2023", "count": 5234, "percent": 11.6},
+    {"label": "2022", "count": 4987, "percent": 11.0}
+  ],
+  "errors": {}
+}
+```
+
+## Error Handling
+
+<Warning>
+Common issues:
+- **No candidates found**: Drug name misspelled or not in database
+- **Msgpack decode errors**: VigiAccess changed response format
+- **Cookie expiration**: Session cookies expired, retry with new session
+- **API key invalid**: Check WHO-UMC subscription status
+</Warning>
+
+```python
+class VigiAccessError(Exception):
+    """Errores de scraping a VigiAccess."""
+    pass
+
+class WhoUmcVigiAccessError(Exception):
+    """Errores de la API oficial WHO-UMC."""
+    pass
+```
+
+## Usage Examples
+
+### Protocol Scraper
+
+```python
+from app.services.vigiaccess import VigiAccessScraper
+
+scraper = VigiAccessScraper()
+result = scraper.scrape_drug("atorvastatin")
+
+print(f"Drug: {result['drug']}")
+print(f"Total reports: {result['total_reports']}")
+print("\nTop 5 SOCs:")
+for row in result['soc_rows'][:5]:
+    print(f"  {row['soc']}: {row['percent']:.1f}% ({row['adr_count']} reports)")
+
+scraper.close()
+```
+
+### WHO-UMC API
+
+```python
+from app.services.who_umc_vigiaccess_api import get_dashboard_tables_for_tradename
+import asyncio
+
+async def main():
+    result = await get_dashboard_tables_for_tradename("atorvastatin")
+    
+    print(f"Query: {result['query']}")
+    print(f"\nGeographic distribution:")
+    for row in result['geo'][:5]:
+        print(f"  {row['label']}: {row['percent']:.1f}% ({row['count']} reports)")
+    
+    if result['errors']:
+        print(f"\nWarnings: {result['errors']}")
+
+asyncio.run(main())
+```
+
+## Related Pages
+
+<CardGroup cols={3}>
+  <Card title="DIGEMID" icon="flag-pe" href="/regulatory/digemid">
+    Peruvian regulatory authority
+  </Card>
+  <Card title="FDA" icon="flag-usa" href="/regulatory/fda">
+    US FDA device recalls
+  </Card>
+  <Card title="EMA" icon="flag-eu" href="/regulatory/ema">
+    European Medicines Agency
+  </Card>
+</CardGroup>

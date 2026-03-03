@@ -1,0 +1,617 @@
+---
+title: Followup Management
+description: Automated followup scheduling, message tracking, and missing data request workflows
+---
+
+Effective followup is critical for obtaining complete case information and ensuring high-quality safety data. VIGIA automates followup scheduling, tracks communications, and manages missing data requests.
+
+## Overview
+
+VIGIA's followup system provides:
+
+- **Automated Scheduling**: ICH E2D guideline-compliant followup timelines (Day 0, 30, 60, 90)
+- **Multi-channel Communication**: Email, SMS, WhatsApp
+- **Missing Data Detection**: AI-powered identification of incomplete fields
+- **Thread Management**: Complete communication history per case
+- **Status Tracking**: Pending, Sent, Responded, Completed
+
+## Followup Workflow
+
+### Initiating Followup
+
+<Steps>
+  <Step title="Access Case Details">
+    Open the case requiring followup:
+    
+    **URL**: `/casos/{icsr_id}`
+  </Step>
+  
+  <Step title="Navigate to Followup Tab">
+    Click **Seguimiento** (Followup) tab
+    
+    The interface shows:
+    - **Message Thread**: All sent and received messages
+    - **Followup Plan**: Scheduled attempts and their status
+    - **Missing Data**: Detected incomplete fields
+    - **Quick Actions**: Send message, schedule attempt, mark complete
+  </Step>
+  
+  <Step title="Review Missing Data">
+    VIGIA automatically detects missing critical fields:
+    
+    ```python
+    compute_missing(icsr) → {
+      "paciente": ["peso", "fecha_nacimiento"],
+      "producto": ["dosis", "via_administracion"],
+      "evento": ["fecha_fin", "desenlace"],
+      "reporter": ["profesion"]
+    }
+    ```
+    
+    The UI displays:
+    <Card title="Información Faltante (4 campos)">
+      **Paciente**:
+      - Peso
+      - Fecha de nacimiento exacta
+      
+      **Producto**:
+      - Dosis exacta y frecuencia
+      - Vía de administración
+      
+      **Evento**:
+      - Fecha de resolución
+      - Desenlace actual
+    </Card>
+  </Step>
+  
+  <Step title="Generate Followup Message">
+    Click **Generate Request**. The system auto-generates a message:
+    
+    ```python
+    build_missing_email_body(icsr, missing_fields) → str
+    ```
+    
+    **Example output**:
+    ```
+    Estimado(a) reportante,
+    
+    Gracias por notificar el evento adverso relacionado con Paracetamol.
+    Para completar la evaluación del caso, necesitamos la siguiente información adicional:
+    
+    INFORMACIÓN DEL PACIENTE:
+    - Peso aproximado
+    - Fecha de nacimiento (o edad exacta)
+    
+    INFORMACIÓN DEL MEDICAMENTO:
+    - Dosis administrada (mg o tabletas)
+    - Vía de administración (oral, inyectable, etc.)
+    
+    INFORMACIÓN DEL EVENTO:
+    - ¿Cuándo se resolvió el evento? (fecha aproximada)
+    - Estado actual del paciente (recuperado, en recuperación, etc.)
+    
+    Puede responder a este correo con la información.
+    
+    Atentamente,
+    Departamento de Farmacovigilancia
+    ```
+  </Step>
+  
+  <Step title="Select Channel">
+    Choose communication channel based on `reportante_contacto`:
+    
+    **Available channels**:
+    ```
+    Channel: [Email ▼]
+    
+    Options:
+    - Email (recommended)
+    - SMS
+    - WhatsApp
+    ```
+    
+    The system extracts contact info:
+    ```python
+    extract_channels(icsr.reportante_contacto) → {
+      "email": "reporter@example.com",
+      "phone": "+51999999999",
+      "whatsapp": "+51999999999"
+    }
+    ```
+  </Step>
+  
+  <Step title="Send Message">
+    Click **Send**. The system:
+    
+    1. **Sends via selected channel**:
+       ```python
+       POST /api/v1/icsr/{icsr_id}/followup/send
+       Body: {
+         "channel": "email",
+         "body": "...",
+         "subject": "[VIGIA] Solicitud de información - ICSR #123"
+       }
+       ```
+    
+    2. **Logs outbound message**:
+       ```python
+       FollowupMessage(
+         icsr_id=123,
+         channel="email",
+         direction="out",
+         body="...",
+         external_id="<msg-id@vigia.com>",
+         status="sent",
+         created_at=datetime.now()
+       )
+       ```
+    
+    3. **Updates case status**:
+       - Changes `estado` from "Pendiente" to "En proceso"
+       - Records followup attempt
+    
+    4. **Email threading**: Uses RFC 2822 headers for thread continuity:
+       ```python
+       In-Reply-To: <previous-message-id>
+       References: <msg-1> <msg-2> <msg-3>
+       ```
+  </Step>
+  
+  <Step title="Schedule Next Attempt">
+    If no response, schedule the next followup:
+    
+    Click **Schedule** > Select date:
+    ```
+    Next Attempt: [2024-04-05 ▼] (30 days from now)
+    ```
+    
+    Standard timeline (ICH E2D):
+    - **Day 0**: Initial request (sent)
+    - **Day 30**: First followup
+    - **Day 60**: Second followup
+    - **Day 90**: Final followup
+    - **Day 120**: Close case if no response
+  </Step>
+</Steps>
+
+## Automated Followup Plans
+
+### Creating a Followup Plan
+
+VIGIA can automatically schedule multiple attempts:
+
+<Steps>
+  <Step title="Define Plan Template">
+    In **Admin** > **Settings** > **Followup Plans**, create a template:
+    
+    ```json
+    {
+      "name": "Standard ICH E2D",
+      "ref": "8.4.1",
+      "attempts": [
+        {"label": "Initial Request", "afterHours": 0},
+        {"label": "First Followup", "afterHours": 720},    // 30 days
+        {"label": "Second Followup", "afterHours": 1440},  // 60 days
+        {"label": "Final Followup", "afterHours": 2160}    // 90 days
+      ],
+      "notes": "ICH E2D guideline compliance"
+    }
+    ```
+  </Step>
+  
+  <Step title="Assign Plan to Case">
+    In the **Seguimiento** tab, click **Apply Plan** > select template:
+    
+    ```
+    Followup Plan: [Standard ICH E2D ▼]
+    
+    Base Date: [2024-03-01 ▼] (case reception date)
+    ```
+    
+    The system calculates absolute dates:
+    ```
+    ✓ Initial Request:    2024-03-01 (sent)
+    ⏱ First Followup:    2024-03-31 (pending)
+    ⏱ Second Followup:   2024-04-30 (pending)
+    ⏱ Final Followup:    2024-05-30 (pending)
+    ```
+  </Step>
+  
+  <Step title="Automated Execution">
+    VIGIA's followup dispatcher runs daily:
+    
+    ```python
+    # backend/app/services/followup_dispatch.py
+    
+    def dispatch_due_followups():
+        """Send followup messages for attempts due today"""
+        due = get_attempts_due_today()
+        
+        for attempt in due:
+            if attempt.status == "pending":
+                send_followup_message(
+                    icsr_id=attempt.icsr_id,
+                    message=attempt.message,
+                    channel=attempt.channel
+                )
+                attempt.status = "sent"
+                attempt.sent_at = datetime.now()
+    ```
+    
+    **Cron schedule**: `0 9 * * *` (daily at 9 AM)
+  </Step>
+  
+  <Step title="Manual Override">
+    You can manually trigger or skip attempts:
+    
+    - **Send Now**: Click ▶ icon (sends immediately, ignores schedule)
+    - **Skip**: Click ⏭ icon (marks as skipped, moves to next)
+    - **Reschedule**: Click 📅 icon (change date)
+    - **Mark Complete**: Click ✓ icon (if info received via other channel)
+  </Step>
+</Steps>
+
+## Message Thread Management
+
+### Viewing Communication History
+
+The **Seguimiento** tab displays a chronological thread:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 📨 OUT | Email | 2024-03-01 10:15                      │
+│ To: reporter@example.com                                │
+│ Subject: [VIGIA] Solicitud de información - ICSR #123   │
+│                                                          │
+│ Estimado reportante,                                     │
+│ Necesitamos información adicional sobre el caso...      │
+│ [Show Full Message]                                      │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│ 📬 IN | Email | 2024-03-05 14:32                       │
+│ From: reporter@example.com                               │
+│ Re: [VIGIA] Solicitud de información - ICSR #123        │
+│                                                          │
+│ Hola, adjunto la información solicitada:                │
+│ - Peso: 68 kg                                            │
+│ - Dosis: 500 mg cada 8 horas                             │
+│ - Evento resuelto el 2024-02-28                          │
+│ [Show Full Message] [Update Case]                       │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│ 📨 OUT | Email | 2024-03-31 09:00                      │
+│ To: reporter@example.com                                │
+│ Subject: [VIGIA] Recordatorio - ICSR #123               │
+│ [Scheduled - First Followup]                             │
+└─────────────────────────────────────────────────────────┘
+```
+
+**API Endpoint**:
+```python
+GET /api/v1/icsr/{icsr_id}/followup/thread
+
+Response: {
+  "items": [
+    {
+      "id": 1,
+      "icsr_id": 123,
+      "channel": "email",
+      "direction": "out",
+      "body": "...",
+      "external_id": "<msg-123@vigia.com>",
+      "created_at": "2024-03-01T10:15:00Z"
+    },
+    ...
+  ],
+  "total": 2
+}
+```
+
+### Processing Inbound Responses
+
+When a reporter responds via email:
+
+<Steps>
+  <Step title="Email Polling">
+    VIGIA polls inbox for new messages:
+    
+    ```python
+    # backend/app/services/email_ingestion.py
+    
+    def poll_inbox():
+        messages = fetch_new_emails()
+        
+        for msg in messages:
+            # Check if In-Reply-To matches existing case
+            parent_id = msg.headers.get("In-Reply-To")
+            icsr = find_icsr_by_message_id(parent_id)
+            
+            if icsr:
+                log_inbound_message(icsr.id, msg)
+                notify_evaluator(icsr)
+    ```
+  </Step>
+  
+  <Step title="Message Logging">
+    Inbound message is added to thread:
+    
+    ```python
+    FollowupMessage(
+      icsr_id=123,
+      channel="email",
+      direction="in",
+      body=msg.body,
+      external_id=msg.message_id,
+      external_meta=json.dumps({
+        "from": msg.from_address,
+        "subject": msg.subject,
+        "references": msg.references
+      })
+    )
+    ```
+  </Step>
+  
+  <Step title="Notification">
+    Assigned evaluator receives alert:
+    
+    **Email**:
+    ```
+    Subject: [VIGIA] Respuesta recibida - ICSR #123
+    
+    El reportante ha respondido a la solicitud de seguimiento.
+    
+    Caso: #123
+    Producto: Paracetamol
+    
+    Revisa la respuesta en VIGIA y actualiza el caso.
+    ```
+    
+    **Dashboard badge**:
+    ```
+    Casos (3 nuevas respuestas) 🔴
+    ```
+  </Step>
+  
+  <Step title="Manual Update">
+    Evaluator reviews response and updates case:
+    
+    1. Open case detail
+    2. Click **Update from Followup** (auto-fill available)
+    3. Review extracted data
+    4. Save changes
+    5. Mark followup as **Completed**
+  </Step>
+</Steps>
+
+## Multi-Channel Support
+
+### Email (Recommended)
+
+**Advantages**:
+- Threaded conversations (In-Reply-To headers)
+- Attachment support
+- Professional appearance
+- Audit trail
+
+**Configuration**: See [Case Intake - Email](/guides/case-intake#email-intake)
+
+### SMS
+
+**Use cases**:
+- Quick reminders
+- No email available
+- Rural areas with limited internet
+
+**Limitations**:
+- 160 character limit (split into multiple for longer messages)
+- No attachments
+- Higher cost per message
+
+**Setup**:
+1. Configure SMS gateway in **Admin** > **Settings** > **SMS**
+2. Supported providers: Twilio, AWS SNS, local SMS gateway
+3. Set `reportante_contacto` to phone number format: `+51999999999`
+
+**Sending**:
+```python
+POST /api/v1/icsr/{icsr_id}/followup/send
+Body: {
+  "channel": "sms",
+  "body": "VIGIA: Necesitamos info adicional del caso #123. Responda o llame al 01-234-5678."
+}
+```
+
+### WhatsApp
+
+**Advantages**:
+- High open rates (98%)
+- Multimedia support (images, documents)
+- Popular in Latin America
+- Read receipts
+
+**Requirements**:
+- WhatsApp Business API account
+- Approved message templates (for proactive outreach)
+
+**Setup**:
+1. Get WhatsApp Business API credentials
+2. Configure webhook: `https://your-vigia.com/api/v1/webhooks/whatsapp`
+3. Create message templates in WhatsApp Manager
+4. Approve templates (required for first contact)
+
+**Message Templates**:
+```json
+{
+  "name": "followup_request",
+  "language": "es",
+  "components": [
+    {
+      "type": "body",
+      "text": "Hola {{1}}, necesitamos información adicional sobre el caso {{2}}. ¿Puede proporcionarnos {{3}}?"
+    }
+  ]
+}
+```
+
+**Sending**:
+```python
+POST /api/v1/icsr/{icsr_id}/followup/send
+Body: {
+  "channel": "whatsapp",
+  "template": "followup_request",
+  "parameters": ["Juan", "#123", "la dosis del medicamento"]
+}
+```
+
+## Followup Status Tracking
+
+### Status Values
+
+| Status | Meaning | Actions |
+|--------|---------|----------|
+| **Pending** | Scheduled but not sent | Send now, Reschedule, Skip |
+| **Sent** | Message delivered | Wait for response, Resend |
+| **Responded** | Reporter replied | Update case, Mark complete |
+| **Completed** | Info received and case updated | Archive |
+| **Skipped** | Manually skipped | Re-activate if needed |
+| **Failed** | Delivery failed (bounce, invalid address) | Update contact, Retry |
+
+### Updating Status
+
+**Automatically**:
+- `Pending` → `Sent` when message is delivered
+- `Sent` → `Responded` when reply received (email threading)
+- `Responded` → `Completed` when case updated
+
+**Manually**:
+```python
+PATCH /api/v1/icsr/{icsr_id}/followup/{message_id}
+Body: {"status": "completed"}
+```
+
+## Closing Followup
+
+### When to Close
+
+Close followup when:
+- ✅ All missing information obtained
+- ✅ Case is complete and ready for reporting
+- ⏰ Maximum attempts reached (e.g., 90 days, no response)
+- 🚫 Reporter explicitly declined to provide more info
+- 🚫 Reporter is unreachable (invalid contact info)
+
+### Closure Workflow
+
+<Steps>
+  <Step title="Mark as Complete">
+    In **Seguimiento** tab, click **Close Followup**
+  </Step>
+  
+  <Step title="Select Closure Reason">
+    ```
+    Reason: [Info Complete ▼]
+    
+    Options:
+    - Info Complete (all data obtained)
+    - Max Attempts Reached (no response after 90 days)
+    - Reporter Declined
+    - Reporter Unreachable
+    - Case Closed (duplicate, invalid, etc.)
+    ```
+  </Step>
+  
+  <Step title="Add Closure Notes">
+    Document the outcome:
+    ```
+    Closure Notes:
+    Información completa obtenida tras segundo seguimiento.
+    Paciente confirmó recuperación total sin secuelas.
+    Caso listo para reporte DIGEMID.
+    ```
+  </Step>
+  
+  <Step title="Update Case Status">
+    The system:
+    - Sets `followup_status = "Closed"`
+    - Updates `estado = "Completado"` (if all required info present)
+    - Cancels pending scheduled attempts
+    - Logs closure in audit trail
+  </Step>
+</Steps>
+
+## Quality Assurance
+
+Before closing followup:
+
+<Check>**All critical missing fields** addressed or documented as unavailable</Check>
+<Check>**Minimum 2 attempts** made (Day 0 + Day 30) for serious cases</Check>
+<Check>**Final status clear**: Complete, No Response, or Declined</Check>
+<Check>**Closure notes** document outcome and any outstanding issues</Check>
+<Check>**Case ready** for next workflow step (causality, reporting)</Check>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Reporter not receiving emails">
+    **Check**:
+    - Email address correct in `reportante_contacto`
+    - Check spam/junk folder (ask reporter)
+    - Verify SMTP send logs: `backend/logs/mail.log`
+    - Test email delivery: `POST /api/v1/admin/mail/test`
+    
+    **Fix**:
+    - Update email address if incorrect
+    - Add VIGIA domain to reporter's whitelist
+    - Use alternative channel (SMS, WhatsApp)
+  </Accordion>
+  
+  <Accordion title="Email thread not linking correctly">
+    **Cause**: Missing or incorrect `In-Reply-To` header
+    
+    **Fix**:
+    1. Check that `external_id` is saved when sending
+    2. Verify mail server supports RFC 2822 headers
+    3. Manual linking: In message thread, click **Link** and select parent message
+  </Accordion>
+  
+  <Accordion title="Scheduled followups not sending">
+    **Check**:
+    - Cron job running: `systemctl status vigia-followup-dispatcher`
+    - Logs: `backend/logs/followup_dispatch.log`
+    - Attempt status: should be "pending" not "skipped"
+    
+    **Fix**:
+    ```bash
+    # Manually trigger dispatcher
+    python -m app.tasks.followup_dispatch
+    
+    # Or via API
+    POST /api/v1/admin/followup/dispatch
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## API Reference
+
+```python
+# Get followup thread
+GET /api/v1/icsr/{icsr_id}/followup/thread
+
+# Send followup message
+POST /api/v1/icsr/{icsr_id}/followup/send
+Body: {"channel": "email", "body": "..."}
+
+# Update message status
+PATCH /api/v1/icsr/{icsr_id}/followup/{message_id}
+Body: {"status": "completed"}
+
+# Apply followup plan
+POST /api/v1/icsr/{icsr_id}/followup/plan
+Body: {"plan_id": 1, "base_at": "2024-03-01T00:00:00Z"}
+
+# Close followup
+POST /api/v1/icsr/{icsr_id}/followup/close
+Body: {"reason": "complete", "notes": "..."}
+```

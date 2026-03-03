@@ -1,0 +1,550 @@
+---
+title: 'Create and Manage IPS Reports'
+description: 'Endpoints for creating, updating, and managing IPS reports'
+---
+
+## List IPS Reports
+
+<CodeGroup>
+```http GET /api/v1/ips
+GET /api/v1/ips?limit=50&offset=0&estado=borrador&producto=123
+Authorization: Bearer <token>
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips",
+    headers={"Authorization": f"Bearer {token}"},
+    params={
+        "limit": 50,
+        "offset": 0,
+        "estado": "borrador",
+        "producto": 123
+    }
+)
+reports = response.json()
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Number of reports to return (1-200)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of reports to skip for pagination
+</ParamField>
+
+<ParamField query="estado" type="string">
+  Filter by report state: `borrador`, `validado`, or `aprobado`
+</ParamField>
+
+<ParamField query="producto" type="integer">
+  Filter by product ID (`producto_id`)
+</ParamField>
+
+### Response
+
+<ResponseField name="array" type="array<IPSReportOut>">
+  List of IPS reports with product details and case counts
+</ResponseField>
+
+```json Response Example
+[
+  {
+    "id": 123,
+    "producto_id": 456,
+    "producto": {
+      "id": 456,
+      "nombre": "PARACETAMOL 500MG TABLETAS",
+      "principio_activo": "PARACETAMOL",
+      "forma_farmaceutica": "TABLETAS",
+      "registro_sanitario": "2021-123456",
+      "fecha_autorizacion": "2021-03-15",
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    },
+    "periodo_inicio": "2024-01-01",
+    "periodo_fin": "2024-12-31",
+    "version": 1,
+    "estado": "borrador",
+    "unidades_comercializadas": 50000,
+    "lotes_distribuidos": 25,
+    "casos": 12,
+    "created_at": "2024-03-15T10:30:00Z",
+    "updated_at": "2024-03-15T14:20:00Z"
+  }
+]
+```
+
+---
+
+## Get Single Report
+
+<CodeGroup>
+```http GET /api/v1/ips/{report_id}
+GET /api/v1/ips/123
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/123",
+    headers={"Authorization": f"Bearer {token}"}
+)
+report = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="report_id" type="integer" required>
+  ID of the IPS report to retrieve
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="integer">
+  Report ID
+</ResponseField>
+
+<ResponseField name="producto_id" type="integer">
+  Associated product ID
+</ResponseField>
+
+<ResponseField name="producto" type="object">
+  Full product details (IPSProducto)
+</ResponseField>
+
+<ResponseField name="periodo_inicio" type="date">
+  Report period start date (YYYY-MM-DD)
+</ResponseField>
+
+<ResponseField name="periodo_fin" type="date">
+  Report period end date (YYYY-MM-DD)
+</ResponseField>
+
+<ResponseField name="version" type="integer">
+  Report version number
+</ResponseField>
+
+<ResponseField name="estado" type="string">
+  Report state: `borrador`, `validado`, or `aprobado`
+</ResponseField>
+
+<ResponseField name="unidades_comercializadas" type="integer">
+  Number of units commercialized during period
+</ResponseField>
+
+<ResponseField name="casos" type="integer">
+  Number of adverse event cases in this period
+</ResponseField>
+
+---
+
+## Create IPS Report
+
+<CodeGroup>
+```http POST /api/v1/ips
+POST /api/v1/ips
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "producto_id": 456,
+  "periodo_inicio": "2024-01-01",
+  "periodo_fin": "2024-12-31",
+  "version": 1,
+  "unidades_comercializadas": 50000
+}
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "producto_id": 456,
+        "periodo_inicio": "2024-01-01",
+        "periodo_fin": "2024-12-31",
+        "version": 1,
+        "unidades_comercializadas": 50000
+    }
+)
+report = response.json()
+```
+</CodeGroup>
+
+### Request Body (IPSReportCreate)
+
+<ParamField body="producto_id" type="integer" required>
+  ID of the product for this report
+</ParamField>
+
+<ParamField body="periodo_inicio" type="date" required>
+  Report period start date (YYYY-MM-DD)
+</ParamField>
+
+<ParamField body="periodo_fin" type="date" required>
+  Report period end date (YYYY-MM-DD). Must be >= periodo_inicio
+</ParamField>
+
+<ParamField body="version" type="integer">
+  Report version number (defaults to 1 if not provided)
+</ParamField>
+
+<ParamField body="unidades_comercializadas" type="integer">
+  Number of units commercialized during the period
+</ParamField>
+
+### Optional Extra Payload
+
+You can pass an additional `extra` object in the request to include sources and KPIs:
+
+```json
+{
+  "producto_id": 456,
+  "periodo_inicio": "2024-01-01",
+  "periodo_fin": "2024-12-31",
+  "extra": {
+    "fuentes": [
+      {
+        "title": "Safety profile of paracetamol",
+        "collection": "PMC",
+        "year": 2024,
+        "url": "https://pubmed.ncbi.nlm.nih.gov/12345"
+      }
+    ],
+    "kpis": {
+      "literaturas_detected": 150,
+      "pmc_detected": 80,
+      "lilacs_detected": 40,
+      "scielo_detected": 30
+    }
+  }
+}
+```
+
+### Response
+
+Returns the created report as `IPSReportOut` with HTTP 200.
+
+---
+
+## Update IPS Report
+
+<CodeGroup>
+```http PUT /api/v1/ips/{report_id}
+PUT /api/v1/ips/123
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "unidades_comercializadas": 55000,
+  "eventos_resumen": {
+    "total_events": 12,
+    "serious_events": 2
+  }
+}
+```
+
+```python Python
+response = requests.put(
+    "https://api.vigia.com/api/v1/ips/123",
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "unidades_comercializadas": 55000,
+        "eventos_resumen": {
+            "total_events": 12,
+            "serious_events": 2
+        }
+    }
+)
+report = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="report_id" type="integer" required>
+  ID of the report to update
+</ParamField>
+
+### Request Body (IPSReportUpdate)
+
+All fields are optional. Only include fields you want to update.
+
+<ParamField body="periodo_inicio" type="date">
+  Report period start date
+</ParamField>
+
+<ParamField body="periodo_fin" type="date">
+  Report period end date
+</ParamField>
+
+<ParamField body="version" type="integer">
+  Report version number
+</ParamField>
+
+<ParamField body="estado" type="string">
+  Report state (use workflow endpoints instead)
+</ParamField>
+
+<ParamField body="unidades_vendidas" type="integer">
+  Units sold during period
+</ParamField>
+
+<ParamField body="lotes_distribuidos" type="integer">
+  Batches distributed during period
+</ParamField>
+
+<ParamField body="unidades_comercializadas" type="integer">
+  Units commercialized during period
+</ParamField>
+
+<ParamField body="eventos_resumen" type="object">
+  Summary of adverse events (JSONB)
+</ParamField>
+
+<ParamField body="senales_detectadas" type="object">
+  Detected safety signals (JSONB)
+</ParamField>
+
+<ParamField body="acciones_regulatorias" type="object">
+  Regulatory actions taken (JSONB)
+</ParamField>
+
+<ParamField body="evaluacion_benef_riesgo" type="object">
+  Benefit-risk evaluation (JSONB)
+</ParamField>
+
+<ParamField body="conclusiones" type="object">
+  Report conclusions (JSONB)
+</ParamField>
+
+<ParamField body="extras" type="object">
+  Additional metadata (JSONB)
+</ParamField>
+
+### Business Rules
+
+- Only reports in `borrador` state can be updated
+- Approved reports (`aprobado`) return HTTP 409 Conflict
+
+---
+
+## Delete IPS Report
+
+<CodeGroup>
+```http DELETE /api/v1/ips/{report_id}
+DELETE /api/v1/ips/123
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "password": "user_password"
+}
+```
+
+```python Python
+response = requests.delete(
+    "https://api.vigia.com/api/v1/ips/123",
+    headers={"Authorization": f"Bearer {token}"},
+    json={"password": "user_password"}
+)
+result = response.json()
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="report_id" type="integer" required>
+  ID of the report to delete
+</ParamField>
+
+### Request Body
+
+<ParamField body="password" type="string" required>
+  Current user's password for confirmation
+</ParamField>
+
+### Response
+
+```json
+{
+  "ok": true,
+  "deleted_id": 123
+}
+```
+
+### Business Rules
+
+- Only `borrador` (draft) reports can be deleted
+- Requires `ips:delete` permission
+- User must provide their password for confirmation
+- Returns HTTP 409 if report is not in draft state
+
+---
+
+## Workflow State Transitions
+
+### QA Validate Report
+
+Transition from `borrador` to `validado`.
+
+<CodeGroup>
+```http POST /api/v1/ips/{report_id}/qa-validate
+POST /api/v1/ips/123/qa-validate
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips/123/qa-validate",
+    headers={"Authorization": f"Bearer {token}"}
+)
+report = response.json()
+```
+</CodeGroup>
+
+**Requirements:**
+- Report must be in `borrador` state
+- Requires `ips:qa` permission
+- Returns HTTP 409 if validation conditions not met
+
+### Approve Report
+
+Transition from `validado` to `aprobado`.
+
+<CodeGroup>
+```http POST /api/v1/ips/{report_id}/approve
+POST /api/v1/ips/123/approve
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.post(
+    "https://api.vigia.com/api/v1/ips/123/approve",
+    headers={"Authorization": f"Bearer {token}"}
+)
+report = response.json()
+```
+</CodeGroup>
+
+**Requirements:**
+- Report must be in `validado` state
+- Requires `ips:approve` permission
+- Once approved, report cannot be edited
+- Returns HTTP 409 if not validated
+
+---
+
+## Export Reports
+
+### Export to DOCX
+
+<CodeGroup>
+```http GET /api/v1/ips/{ips_id}/export/docx
+GET /api/v1/ips/123/export/docx
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/123/export/docx",
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+with open("report_123.docx", "wb") as f:
+    f.write(response.content)
+```
+</CodeGroup>
+
+**Response:** Binary DOCX file with MIME type `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+
+### Export to PDF
+
+<CodeGroup>
+```http GET /api/v1/ips/{ips_id}/export/pdf
+GET /api/v1/ips/123/export/pdf
+Authorization: Bearer <token>
+```
+
+```python Python
+response = requests.get(
+    "https://api.vigia.com/api/v1/ips/123/export/pdf",
+    headers={"Authorization": f"Bearer {token}"}
+)
+
+with open("report_123.pdf", "wb") as f:
+    f.write(response.content)
+```
+</CodeGroup>
+
+**Response:** Binary PDF file with MIME type `application/pdf`
+
+---
+
+## Create Product
+
+Create a new product before creating IPS reports.
+
+<CodeGroup>
+```http POST /api/v1/ips/productos
+POST /api/v1/ips/productos
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "nombre": "PARACETAMOL 500MG TABLETAS",
+  "principio_activo": "PARACETAMOL",
+  "forma_farmaceutica": "TABLETAS",
+  "presentacion": "CAJA X 20 TABLETAS",
+  "via": "ORAL",
+  "registro_sanitario": "2021-123456",
+  "fecha_autorizacion": "2021-03-15",
+  "fabricante": "Laboratorio ABC S.A."
+}
+```
+</CodeGroup>
+
+### Request Body (IPSProductoCreate)
+
+<ParamField body="nombre" type="string" required>
+  Product name with strength and form
+</ParamField>
+
+<ParamField body="principio_activo" type="string">
+  Active ingredient (IFA)
+</ParamField>
+
+<ParamField body="forma_farmaceutica" type="string">
+  Pharmaceutical form (e.g., TABLETAS, CAPSULAS, SUSPENSION)
+</ParamField>
+
+<ParamField body="presentacion" type="string">
+  Presentation/packaging details
+</ParamField>
+
+<ParamField body="via" type="string">
+  Route of administration (e.g., ORAL, INTRAVENOSA)
+</ParamField>
+
+<ParamField body="registro_sanitario" type="string">
+  Sanitary registration number
+</ParamField>
+
+<ParamField body="fecha_autorizacion" type="date">
+  Authorization date (YYYY-MM-DD)
+</ParamField>
+
+<ParamField body="fabricante" type="string">
+  Manufacturer name
+</ParamField>
+
+### Response
+
+Returns the created product as `IPSProductoOut` with HTTP 200.
