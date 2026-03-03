@@ -252,7 +252,7 @@ The `/auth/me` endpoint returns the current user's permissions:
 Permissions are enforced at the API level using dependency injection:
 
 ```python Permission Dependencies
-from app.security.deps import require_permission
+from app.api.auth.permissions import require_permission
 
 @router.get("/icsrs/{icsr_id}")
 def get_icsr(

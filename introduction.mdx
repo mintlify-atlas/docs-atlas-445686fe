@@ -84,12 +84,11 @@ from app.services.ocr_service import ocr_file
 text = ocr_file("/path/to/document.pdf")
 
 # NLP extraction for adverse events
-from app.services.openai_extractor import extract_adverse_event
+from app.services.openai_extractor import openai_extract_fields
 
-events = await extract_adverse_event(
-    text=text,
-    model="gpt-4",
-    language="es"
+extracted_data = openai_extract_fields(
+    email_text=text,
+    sender_email="reporter@example.com"
 )
 ```
 
